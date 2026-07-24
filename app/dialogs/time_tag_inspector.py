@@ -58,6 +58,10 @@ class TimeTagInspector:
             self.root
         )
 
+        self.app.apply_window_icon(
+            self.window
+        )
+
         self.window.title(
             "検査"
         )

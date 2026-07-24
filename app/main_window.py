@@ -854,6 +854,26 @@ class LyricsFormatter:
             self.on_main_focus
         )
 
+    def apply_window_icon(
+        self,
+        window
+    ):
+
+        try:
+
+            icon_path = os.path.join(
+                self.get_app_dir(),
+                "icon.ico"
+            )
+
+            window.iconbitmap(
+                icon_path
+            )
+
+        except Exception:
+
+            pass
+
     def center_window(
         self,
         window
@@ -1590,8 +1610,10 @@ class LyricsFormatter:
             )
 
             threshold = (
-                int(mm) * 6000 +
-                int(ss) * 100 +
+                int(mm) * 6000
+                +
+                int(ss) * 100
+                +
                 int(cs)
             )
 
@@ -1605,24 +1627,24 @@ class LyricsFormatter:
             return
 
         #
-        # 入力取得（空行は除外）
+        # 入力取得（既存空行は除外）
         #
 
         lines = [
 
-            x.rstrip()
+            line.rstrip()
 
-            for x in
+            for line in
             self.input_text.get(
                 "1.0",
                 "end"
             ).splitlines()
 
-            if x.strip()
+            if line.strip()
         ]
 
         #
-        # 時間順に並べ替え
+        # 必要なら最初のタイムタグ順に並べ替え
         #
 
         if self.sort_by_first_tag.get():
@@ -1637,59 +1659,72 @@ class LyricsFormatter:
             self.line_count_var.get()
         )
 
-        pair = 0
+        #
+        # 直前の空行から何行追加したか
+        #
 
-        for i, line in enumerate(
+        lines_in_block = 0
+
+        for index, line in enumerate(
             lines
         ):
 
-            result.append(line)
+            result.append(
+                line
+            )
 
-            pair += 1
+            lines_in_block += 1
 
-            blank = False
+            #
+            # 最終行の後ろには空行を追加しない
+            #
 
-            if i < len(lines) - 1:
+            if index >= len(lines) - 1:
 
-                current_times = self.extract_times(
-                    line
-                )
+                continue
 
-                next_times = self.extract_times(
-                    lines[i + 1]
-                )
+            current_line_times = self.extract_times(
+                line
+            )
 
-                if (
-                    current_times
-                    and
-                    next_times
-                ):
+            next_line_times = self.extract_times(
+                lines[index + 1]
+            )
 
-                    last_time = current_times[1]
-                    next_first = next_times[0]
+            current_last_time = current_line_times[1]
+            next_first_time = next_line_times[0]
 
-                    if (
-                        next_first
-                        -
-                        last_time
-                        >= threshold
-                    ):
+            #
+            # 各隣接行を必ずしきい値判定
+            #
 
-                        blank = True
-                        pair = 0
+            threshold_break = (
+                current_last_time is not None
+                and
+                next_first_time is not None
+                and
+                next_first_time - current_last_time >= threshold
+            )
 
-            if pair >= line_count:
+            #
+            # 設定行数に到達
+            #
 
-                blank = True
-                pair = 0
+            line_count_break = (
+                lines_in_block >= line_count
+            )
 
             if (
-                blank
-                and
-                i < len(lines) - 1
+                threshold_break
+                or
+                line_count_break
             ):
 
-                result.append("")
+                result.append(
+                    ""
+                )
+
+                lines_in_block = 0
 
         self.output_text.delete(
             "1.0",
@@ -1730,6 +1765,10 @@ class LyricsFormatter:
 
         win = tk.Toplevel(
             self.root
+        )
+
+        self.apply_window_icon(
+            win
         )
         
         win.transient(
@@ -2137,6 +2176,10 @@ class LyricsFormatter:
 
         self.monitor_popup = tk.Toplevel(
             self.root
+        )
+
+        self.apply_window_icon(
+            self.monitor_popup
         )
 
         self.monitor_popup.title(
