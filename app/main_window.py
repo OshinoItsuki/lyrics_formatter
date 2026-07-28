@@ -1014,6 +1014,11 @@ class LyricsFormatter:
             font=("Yu Gothic UI", 10)
         )
 
+        text.bind(
+            "<Button-3>",
+            lambda event, widget=text: self.show_text_context_menu(event, widget)
+        )
+
         line_numbers.bind(
             "<Button-1>",
             lambda e, t=text, n=line_numbers:
@@ -1180,7 +1185,66 @@ class LyricsFormatter:
         text.outer_frame = outer
 
         return text
-    
+
+    def show_text_context_menu(self, event, widget):
+
+        menu = tk.Menu(self.root, tearoff=0)
+
+        menu.add_command(
+            label="切り取り",
+            command=lambda: self.text_context_action(widget, "<<Cut>>")
+        )
+
+        menu.add_command(
+            label="コピー",
+            command=lambda: self.text_context_action(widget, "<<Copy>>")
+        )
+
+        menu.add_command(
+            label="貼り付け",
+            command=lambda: self.text_context_action(widget, "<<Paste>>")
+        )
+
+        menu.add_separator()
+
+        menu.add_command(
+            label="すべて選択",
+            command=lambda: self.select_all_text(widget)
+        )
+
+        try:
+            has_selection = bool(widget.tag_ranges(tk.SEL))
+            menu.entryconfigure("切り取り", state="normal" if has_selection else "disabled")
+            menu.entryconfigure("コピー", state="normal" if has_selection else "disabled")
+            try:
+                self.root.clipboard_get()
+                paste_state = "normal"
+            except tk.TclError:
+                paste_state = "disabled"
+            menu.entryconfigure("貼り付け", state=paste_state)
+            widget.focus_set()
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def text_context_action(self, widget, virtual_event):
+
+        widget.event_generate(virtual_event)
+        self.root.after(
+            1,
+            lambda: self.refresh_visuals(
+                widget,
+                self.areas[0][1] if widget == self.input_text else self.areas[1][1]
+            )
+        )
+
+    def select_all_text(self, widget):
+
+        widget.tag_add(tk.SEL, "1.0", "end-1c")
+        widget.mark_set(tk.INSERT, "1.0")
+        widget.see(tk.INSERT)
+        widget.focus_set()
+
     def undo(self, event=None):
 
         widget = self.root.focus_get()
@@ -1668,16 +1732,45 @@ class LyricsFormatter:
             "effective_protection_ms": protection,
         }
 
-    def build_page_result(self, lines, lengths):
+    def get_paragraph_ranges(self, lines, threshold):
+
+        if not lines:
+            return []
+
+        ranges = []
+        start = 0
+
+        for index in range(len(lines) - 1):
+            current_last = self.extract_times(lines[index])[1]
+            next_first = self.extract_times(lines[index + 1])[0]
+            is_paragraph_break = (
+                current_last is not None
+                and next_first is not None
+                and next_first - current_last >= threshold
+            )
+
+            if is_paragraph_break:
+                ranges.append((start, index))
+                start = index + 1
+
+        ranges.append((start, len(lines) - 1))
+        return ranges
+
+    def build_allocation_result(self, lines, plan):
 
         result = []
-        position = 0
 
-        for page_length in lengths:
-            result.extend(lines[position:position + page_length])
-            position += page_length
-            if position < len(lines):
-                result.append("")
+        for paragraph_index, paragraph in enumerate(plan.paragraphs):
+            for index in range(paragraph.start, paragraph.end + 1):
+                result.append(lines[index])
+                offset = index - paragraph.start + 1
+
+                if index < paragraph.end and offset % paragraph.line_count == 0:
+                    result.append("")
+
+            if paragraph_index < len(plan.paragraphs) - 1:
+                if result and result[-1] != "":
+                    result.append("")
 
         return result
 
@@ -1790,35 +1883,95 @@ class LyricsFormatter:
         self.copy_output()
 
     def auto_allocate(self):
-        lines = [line.rstrip() for line in self.input_text.get("1.0", "end").splitlines() if line.strip()]
+
+        lines = [
+            line.rstrip()
+            for line in self.input_text.get("1.0", "end").splitlines()
+            if line.strip()
+        ]
+
         if not lines:
             messagebox.showinfo("自動割付", "入力欄に歌詞がありません。")
             return
+
         if self.sort_by_first_tag.get():
             lines = self.sort_lines_by_first_tag(lines)
+
         try:
+            mm, ss, cs = self.threshold_var.get().split(":")
+            threshold = int(mm) * 6000 + int(ss) * 100 + int(cs)
             base_lines = int(self.line_count_var.get())
             maximum = int(self.max_page_lines.get())
             if base_lines < 2 or maximum < 2:
                 raise ValueError
             maximum = max(base_lines, maximum)
         except Exception:
-            messagebox.showerror("自動割付", "区切り行数と自動割付の最大行数は2以上の整数で指定してください。")
+            messagebox.showerror(
+                "自動割付",
+                "閾値は mm:ss:SS、区切り行数と最大行数は2以上の整数で指定してください。"
+            )
             return
 
         times = [self.extract_times(line) for line in lines]
         settings = self.get_nicokara_timing_settings()
-        plan = optimize_pages(times, settings, 2, maximum)
+        paragraph_ranges = self.get_paragraph_ranges(lines, threshold)
         mode = self.page_adjustment_mode.get()
 
         if mode == "auto":
-            result = self.build_page_result(lines, plan.lengths)
+            plan = optimize_pages(
+                times,
+                settings,
+                min_lines=2,
+                max_lines=maximum,
+                paragraph_ranges=paragraph_ranges,
+                base_lines=base_lines,
+            )
+            result = self.build_allocation_result(lines, plan)
             self.output_text.delete("1.0", "end")
             self.output_text.insert("1.0", "\n".join(result))
             self.refresh_visuals(self.output_text, self.areas[1][1])
             self.copy_output()
+        else:
+            # 提案モードは出力を変えず、各段落で基準行数を使った結果を表示する。
+            # 改善可能な段落だけ、最適行数へ置き換えて黄色で強調する。
+            fixed_plan = fixed_pages(
+                times,
+                settings,
+                base_lines,
+                paragraph_ranges=paragraph_ranges,
+            )
+            suggested_plan = optimize_pages(
+                times,
+                settings,
+                min_lines=2,
+                max_lines=maximum,
+                paragraph_ranges=paragraph_ranges,
+                base_lines=base_lines,
+            )
 
-        self.auto_allocation_dialog.show(lines, plan, mode, base_lines, settings)
+            for fixed, suggested in zip(fixed_plan.paragraphs, suggested_plan.paragraphs):
+                fixed_cost = sum(
+                    item.timing.reduction_ms + item.timing.forced_cut_ms
+                    for item in fixed.replacements
+                )
+                suggested_cost = sum(
+                    item.timing.reduction_ms + item.timing.forced_cut_ms
+                    for item in suggested.replacements
+                )
+                if suggested_cost < fixed_cost:
+                    fixed.line_count = suggested.line_count
+                    fixed.replacements = suggested.replacements
+                    fixed.changed = suggested.line_count != base_lines
+
+            plan = fixed_plan
+
+        self.auto_allocation_dialog.show(
+            lines,
+            plan,
+            mode,
+            base_lines,
+            settings
+        )
 
     def open_readme(self):
 
