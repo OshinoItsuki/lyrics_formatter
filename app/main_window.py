@@ -17,6 +17,7 @@ from .config import (
 )
 from .dialogs.settings_dialog import SettingsDialog
 from .dialogs.time_tag_inspector import TimeTagInspector
+from .dialogs.auto_allocation_dialog import AutoAllocationDialog
 from .services.part_extractor import extract_parts as extract_part_names
 from .services.update_service import get_latest_release as fetch_latest_release
 from .services.page_optimizer import fixed_pages, optimize_pages
@@ -125,6 +126,7 @@ class LyricsFormatter:
         self.inspector = TimeTagInspector(self)
         
         self.settings_dialog = SettingsDialog(self)
+        self.auto_allocation_dialog = AutoAllocationDialog(self)
         
         self.build_ui()
 
@@ -536,6 +538,11 @@ class LyricsFormatter:
         )
 
         tool_menu.add_command(
+            label="自動割付",
+            command=self.auto_allocate
+        )
+
+        tool_menu.add_command(
             label="タイムタグ検査",
             command=self.inspector.show
         )
@@ -704,6 +711,15 @@ class LyricsFormatter:
             top_buttons,
             text="自動整形",
             command=self.auto_format
+        ).pack(
+            side="left",
+            padx=2
+        )
+
+        tk.Button(
+            top_buttons,
+            text="自動割付",
+            command=self.auto_allocate
         ).pack(
             side="left",
             padx=2
@@ -1740,51 +1756,69 @@ class LyricsFormatter:
 
     def auto_format(self):
 
-        lines = [
-            line.rstrip()
-            for line in self.input_text.get("1.0", "end").splitlines()
-            if line.strip()
-        ]
-
-        if not lines:
+        try:
+            mm, ss, cs = self.threshold_var.get().split(":")
+            threshold = int(mm) * 6000 + int(ss) * 100 + int(cs)
+            line_count = int(self.line_count_var.get())
+            if line_count < 2:
+                raise ValueError
+        except Exception:
+            messagebox.showerror("エラー", "閾値は mm:ss:SS、区切り行数は2以上の整数で指定してください。")
             return
 
+        lines = [line.rstrip() for line in self.input_text.get("1.0", "end").splitlines() if line.strip()]
         if self.sort_by_first_tag.get():
             lines = self.sort_lines_by_first_tag(lines)
 
-        times = [self.extract_times(line) for line in lines]
-        settings = self.get_nicokara_timing_settings()
-        mode = self.page_adjustment_mode.get()
-
-        suggested_plan = None
-
-        if mode == "auto":
-            plan = optimize_pages(
-                times,
-                settings,
-                self.min_page_lines.get(),
-                self.max_page_lines.get(),
-            )
-        else:
-            plan = fixed_pages(
-                times,
-                settings,
-                int(self.line_count_var.get()),
-            )
-            suggested_plan = optimize_pages(
-                times,
-                settings,
-                self.min_page_lines.get(),
-                self.max_page_lines.get(),
-            )
-
-        result = self.build_page_result(lines, plan.lengths)
+        result = []
+        lines_in_block = 0
+        for index, line in enumerate(lines):
+            result.append(line)
+            lines_in_block += 1
+            if index >= len(lines) - 1:
+                continue
+            current_last = self.extract_times(line)[1]
+            next_first = self.extract_times(lines[index + 1])[0]
+            threshold_break = current_last is not None and next_first is not None and next_first - current_last >= threshold
+            if threshold_break or lines_in_block >= line_count:
+                result.append("")
+                lines_in_block = 0
 
         self.output_text.delete("1.0", "end")
         self.output_text.insert("1.0", "\n".join(result))
         self.refresh_visuals(self.output_text, self.areas[1][1])
         self.copy_output()
-        self.show_timing_report(plan, lines, mode, suggested_plan)
+
+    def auto_allocate(self):
+        lines = [line.rstrip() for line in self.input_text.get("1.0", "end").splitlines() if line.strip()]
+        if not lines:
+            messagebox.showinfo("自動割付", "入力欄に歌詞がありません。")
+            return
+        if self.sort_by_first_tag.get():
+            lines = self.sort_lines_by_first_tag(lines)
+        try:
+            base_lines = int(self.line_count_var.get())
+            maximum = int(self.max_page_lines.get())
+            if base_lines < 2 or maximum < 2:
+                raise ValueError
+            maximum = max(base_lines, maximum)
+        except Exception:
+            messagebox.showerror("自動割付", "区切り行数と自動割付の最大行数は2以上の整数で指定してください。")
+            return
+
+        times = [self.extract_times(line) for line in lines]
+        settings = self.get_nicokara_timing_settings()
+        plan = optimize_pages(times, settings, 2, maximum)
+        mode = self.page_adjustment_mode.get()
+
+        if mode == "auto":
+            result = self.build_page_result(lines, plan.lengths)
+            self.output_text.delete("1.0", "end")
+            self.output_text.insert("1.0", "\n".join(result))
+            self.refresh_visuals(self.output_text, self.areas[1][1])
+            self.copy_output()
+
+        self.auto_allocation_dialog.show(lines, plan, mode, base_lines, settings)
 
     def open_readme(self):
 

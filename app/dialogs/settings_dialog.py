@@ -166,31 +166,10 @@ class SettingsDialog:
             sticky="nw"
         )
 
-        radio_frame = tk.Frame(
-            main_group
-        )
-
-        radio_frame.grid(
-            row=1,
-            column=1,
-            sticky="w",
-            padx=(10,0)
-        )
-
-        for value in (
-            "2",
-            "3",
-            "4"
-        ):
-
-            tk.Radiobutton(
-                radio_frame,
-                text=f"{value}行",
-                value=value,
-                variable=self.line_count_var
-            ).pack(
-                anchor="w"
-            )
+        line_frame = tk.Frame(main_group)
+        line_frame.grid(row=1, column=1, sticky="w", padx=(10,0))
+        tk.Spinbox(line_frame, from_=2, to=999, width=6, textvariable=self.line_count_var).pack(side="left")
+        tk.Label(line_frame, text="行").pack(side="left", padx=(4,0))
 
         tk.Checkbutton(
             main_group,
@@ -322,9 +301,9 @@ class SettingsDialog:
         tk.Radiobutton(mode_frame, text="提案", value="proposal", variable=self.page_adjustment_mode).pack(side="left")
         tk.Radiobutton(mode_frame, text="自動調整", value="auto", variable=self.page_adjustment_mode).pack(side="left")
         tk.Label(mode_frame, text="  最小").pack(side="left")
-        tk.Spinbox(mode_frame, from_=2, to=4, width=3, textvariable=self.min_page_lines).pack(side="left")
+        tk.Label(mode_frame, text="2").pack(side="left")
         tk.Label(mode_frame, text="行  最大").pack(side="left")
-        tk.Spinbox(mode_frame, from_=2, to=4, width=3, textvariable=self.max_page_lines).pack(side="left")
+        tk.Spinbox(mode_frame, from_=2, to=999, width=5, textvariable=self.max_page_lines).pack(side="left")
         tk.Label(mode_frame, text="行").pack(side="left")
 
         #
@@ -488,7 +467,8 @@ class SettingsDialog:
             post = int(self.post_wipe_ms.get())
             interval = int(self.interval_ms.get())
             protect = int(self.manual_protection_ms.get())
-            minimum = int(self.min_page_lines.get())
+            base_lines = int(self.line_count_var.get())
+            minimum = 2
             maximum = int(self.max_page_lines.get())
         except (TypeError, ValueError, tk.TclError):
             messagebox.showerror("設定エラー", "表示時間と行数には整数を指定してください。", parent=self.window)
@@ -500,9 +480,10 @@ class SettingsDialog:
         if self.manual_protection_enabled.get() and protect > min(pre, post):
             messagebox.showerror("設定エラー", "表示保護時間はワイプ前後の短い方以下にしてください。", parent=self.window)
             return
-        if not (2 <= minimum <= maximum <= 4):
-            messagebox.showerror("設定エラー", "ページ行数は2～4行で、最小≦最大にしてください。", parent=self.window)
+        if base_lines < 2 or maximum < 2:
+            messagebox.showerror("設定エラー", "区切り行数と自動割付の最大行数は2以上で指定してください。", parent=self.window)
             return
+        maximum = max(base_lines, maximum)
 
         self.app.nkm_settings_path.set(self.nkm_settings_path.get())
         self.app.pre_wipe_ms.set(pre)
