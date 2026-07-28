@@ -297,14 +297,9 @@ class SettingsDialog:
 
         mode_frame = tk.Frame(timing_group)
         mode_frame.grid(row=6, column=0, columnspan=4, sticky="w", pady=(10,0))
-        tk.Label(mode_frame, text="ページ行数調整：").pack(side="left")
-        tk.Radiobutton(mode_frame, text="提案", value="proposal", variable=self.page_adjustment_mode).pack(side="left")
-        tk.Radiobutton(mode_frame, text="自動調整", value="auto", variable=self.page_adjustment_mode).pack(side="left")
-        tk.Label(mode_frame, text="  最小").pack(side="left")
-        tk.Label(mode_frame, text="2").pack(side="left")
-        tk.Label(mode_frame, text="行  最大").pack(side="left")
+        tk.Label(mode_frame, text="自動割付の最大行数：").pack(side="left")
         tk.Spinbox(mode_frame, from_=2, to=999, width=5, textvariable=self.max_page_lines).pack(side="left")
-        tk.Label(mode_frame, text="行").pack(side="left")
+        tk.Label(mode_frame, text="行（基準行数から必要な場合だけ増加）").pack(side="left")
 
         #
         # タイムタグ検査設定
@@ -491,7 +486,6 @@ class SettingsDialog:
         self.app.interval_ms.set(interval)
         self.app.manual_protection_enabled.set(self.manual_protection_enabled.get())
         self.app.manual_protection_ms.set(protect)
-        self.app.page_adjustment_mode.set(self.page_adjustment_mode.get())
         self.app.min_page_lines.set(minimum)
         self.app.max_page_lines.set(maximum)
 

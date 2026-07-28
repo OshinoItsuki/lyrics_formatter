@@ -8,13 +8,14 @@ from ..config import TIME_PATTERN
 
 
 def _format_ms(value: int | None) -> str:
+    """ミリ秒値をタイムタグと同じ mm:ss:SS（1/100秒）で表示する。"""
     if value is None:
-        return "--:--:---"
+        return "--:--:--"
     sign = "-" if value < 0 else ""
-    value = abs(int(value))
-    minutes, rem = divmod(value, 60_000)
-    seconds, millis = divmod(rem, 1_000)
-    return f"{sign}{minutes:02d}:{seconds:02d}:{millis:03d}"
+    total_centiseconds = abs(int(value)) // 10
+    minutes, rem = divmod(total_centiseconds, 6000)
+    seconds, centiseconds = divmod(rem, 100)
+    return f"{sign}{minutes:02d}:{seconds:02d}:{centiseconds:02d}"
 
 
 def _lyric_only(text: str) -> str:
@@ -47,7 +48,6 @@ class AutoAllocationDialog:
         self.settings = None
         self.recalculate_callback = None
         self.apply_callback = None
-        self.mode_var = tk.StringVar(value="proposal")
         self.base_lines_var = tk.StringVar(value="2")
         self.max_lines_var = tk.StringVar(value="4")
         self.status_var = tk.StringVar(value="")
@@ -60,7 +60,6 @@ class AutoAllocationDialog:
         self,
         lines,
         plan,
-        mode: str,
         base_lines: int,
         settings,
         maximum: int,
@@ -75,7 +74,6 @@ class AutoAllocationDialog:
         self.settings = settings
         self.recalculate_callback = recalculate_callback
         self.apply_callback = apply_callback
-        self.mode_var.set(mode)
         self.base_lines_var.set(str(base_lines))
         self.max_lines_var.set(str(maximum))
 
@@ -89,33 +87,23 @@ class AutoAllocationDialog:
         controls = tk.LabelFrame(self.window, text="割付条件", padx=10, pady=8)
         controls.pack(fill="x", padx=10, pady=(10, 6))
 
-        tk.Label(controls, text="モード").grid(row=0, column=0, sticky="w")
-        tk.Radiobutton(
-            controls, text="提案", variable=self.mode_var, value="proposal",
-            command=self._mode_changed,
-        ).grid(row=0, column=1, sticky="w", padx=(8, 4))
-        tk.Radiobutton(
-            controls, text="自動調整", variable=self.mode_var, value="auto",
-            command=self._mode_changed,
-        ).grid(row=0, column=2, sticky="w", padx=(4, 18))
-
-        tk.Label(controls, text="基準行数").grid(row=0, column=3, sticky="e")
+        tk.Label(controls, text="基準行数").grid(row=0, column=0, sticky="e")
         tk.Spinbox(
             controls, from_=2, to=999, width=5,
             textvariable=self.base_lines_var,
-        ).grid(row=0, column=4, padx=(6, 16))
+        ).grid(row=0, column=1, padx=(6, 16))
 
-        tk.Label(controls, text="最大行数").grid(row=0, column=5, sticky="e")
+        tk.Label(controls, text="最大行数").grid(row=0, column=2, sticky="e")
         tk.Spinbox(
             controls, from_=2, to=999, width=5,
             textvariable=self.max_lines_var,
-        ).grid(row=0, column=6, padx=(6, 18))
+        ).grid(row=0, column=3, padx=(6, 18))
 
-        tk.Button(controls, text="再計算", width=12, command=self._recalculate).grid(row=0, column=7, padx=(0, 8))
+        tk.Button(controls, text="再計算", width=12, command=self._recalculate).grid(row=0, column=4, padx=(0, 8))
         self.apply_button = tk.Button(controls, width=16, command=self._apply)
-        self.apply_button.grid(row=0, column=8, padx=(0, 8))
-        tk.Button(controls, text="閉じる", width=12, command=self.window.destroy).grid(row=0, column=9)
-        controls.grid_columnconfigure(10, weight=1)
+        self.apply_button.grid(row=0, column=5, padx=(0, 8))
+        tk.Button(controls, text="閉じる", width=12, command=self.window.destroy).grid(row=0, column=6)
+        controls.grid_columnconfigure(7, weight=1)
 
         summary = tk.Frame(self.window, padx=10)
         summary.pack(fill="x", pady=(0, 5))
@@ -128,7 +116,7 @@ class AutoAllocationDialog:
         tk.Label(legend, text="━\n━  段落区切り", justify="left", font=("Yu Gothic UI", 9, "bold")).pack(side="left")
 
         self._build_table_host()
-        self._update_apply_button()
+        self.apply_button.configure(text="反映")
         self._render()
 
     def _build_table_host(self):
@@ -182,15 +170,6 @@ class AutoAllocationDialog:
         if self.window and self.window.winfo_exists() and self.window.focus_displayof() is not None:
             self.body_canvas.yview_scroll(int(-event.delta / 120), "units")
 
-    def _mode_changed(self):
-        self._update_apply_button()
-
-    def _update_apply_button(self):
-        if not self.apply_button:
-            return
-        text = "提案を反映" if self.mode_var.get() == "proposal" else "自動割付を反映"
-        self.apply_button.configure(text=text)
-
     def _validated_values(self):
         try:
             base_lines = int(self.base_lines_var.get())
@@ -199,7 +178,7 @@ class AutoAllocationDialog:
                 raise ValueError
             maximum = max(base_lines, maximum)
             self.max_lines_var.set(str(maximum))
-            return self.mode_var.get(), base_lines, maximum
+            return base_lines, maximum
         except Exception:
             messagebox.showerror("自動割付", "基準行数と最大行数は2以上の整数で指定してください。", parent=self.window)
             return None
@@ -208,30 +187,27 @@ class AutoAllocationDialog:
         values = self._validated_values()
         if values is None:
             return
-        mode, base_lines, maximum = values
+        base_lines, maximum = values
         try:
-            self.plan, self.settings = self.recalculate_callback(mode, base_lines, maximum)
+            self.plan, self.settings = self.recalculate_callback(base_lines, maximum)
         except Exception as exc:
             messagebox.showerror("自動割付", f"再計算に失敗しました。\n\n{exc}", parent=self.window)
             return
-        self.app.page_adjustment_mode.set(mode)
         self.app.line_count_var.set(str(base_lines))
         self.app.max_page_lines.set(maximum)
-        self._update_apply_button()
         self._render()
 
     def _apply(self):
         values = self._validated_values()
         if values is None:
             return
-        mode, base_lines, maximum = values
+        base_lines, maximum = values
         try:
-            self.plan, self.settings = self.recalculate_callback(mode, base_lines, maximum)
-            self.apply_callback(self.plan, mode, base_lines, maximum)
+            self.plan, self.settings = self.recalculate_callback(base_lines, maximum)
+            self.apply_callback(self.plan, base_lines, maximum)
         except Exception as exc:
             messagebox.showerror("自動割付", f"割付結果の反映に失敗しました。\n\n{exc}", parent=self.window)
             return
-        self.app.page_adjustment_mode.set(mode)
         self.app.line_count_var.set(str(base_lines))
         self.app.max_page_lines.set(maximum)
         self._render()
@@ -241,15 +217,13 @@ class AutoAllocationDialog:
         for child in self.body_frame.winfo_children():
             child.destroy()
 
-        mode = self.mode_var.get()
         base_lines = int(self.base_lines_var.get())
         requested = self.settings["pre_wipe_ms"] + self.settings["post_wipe_ms"] + self.settings["interval_ms"]
         changed_count = sum(1 for paragraph in self.plan.paragraphs if paragraph.changed)
         reduced_count = sum(1 for boundary in self.plan.boundaries if not boundary.timing.is_full)
         self.status_var.set(
             f"必要時間 {requested} ms　段落 {len(self.plan.paragraphs)}件　"
-            f"行数変更 {changed_count}件　表示時間削減 {reduced_count}件　"
-            f"モード：{'自動調整' if mode == 'auto' else '提案'}"
+            f"行数変更 {changed_count}件　表示時間削減 {reduced_count}件"
         )
 
         replacement_by_next = {}

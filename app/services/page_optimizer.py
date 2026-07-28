@@ -91,27 +91,43 @@ def _evaluate_paragraph(times, start, end, line_count, settings, base_lines):
 
 
 def build_plan(times, paragraph_ranges, settings, base_lines=2, max_lines=4, optimize=False) -> PagePlan:
+    """段落ごとの同時表示行数を決定する。
+
+    自動調整時は必ず基準行数を最優先する。基準行数で全境界の
+    表示時間を維持できなければ1行ずつ増やし、最初に削減なしに
+    できた行数を採用する。最大行数でも維持できない場合のみ、
+    最大行数の構成にニコカラメーカーの削減ルールを適用する。
+    """
     base_lines = max(2, int(base_lines))
     max_lines = max(base_lines, int(max_lines))
     paragraphs = []
 
     for start, end in paragraph_ranges:
         paragraph_size = end - start + 1
-        upper = max(2, min(max_lines, paragraph_size))
-        candidates = []
-        line_counts = range(2, upper + 1) if optimize else [min(base_lines, max(2, paragraph_size))]
+        effective_base = min(base_lines, max(2, paragraph_size))
+        upper = min(max_lines, max(2, paragraph_size))
 
-        for line_count in line_counts:
-            paragraph = _evaluate_paragraph(
+        if not optimize:
+            paragraphs.append(
+                _evaluate_paragraph(
+                    times, start, end, effective_base, settings, base_lines
+                )
+            )
+            continue
+
+        selected = None
+        last_candidate = None
+        for line_count in range(effective_base, upper + 1):
+            candidate = _evaluate_paragraph(
                 times, start, end, line_count, settings, base_lines
             )
-            cost = sum(_timing_cost(item.timing) for item in paragraph.replacements)
-            # 同等なら基準行数に近く、さらに少ない行数を優先する。
-            preference = abs(line_count - base_lines) * 1000 + line_count
-            candidates.append((cost, preference, paragraph))
+            last_candidate = candidate
+            if all(item.timing.is_full for item in candidate.replacements):
+                selected = candidate
+                break
 
-        candidates.sort(key=lambda item: (item[0], item[1]))
-        paragraphs.append(candidates[0][2])
+        # 最大行数まで増やしても守れない場合は、最大行数で削減する。
+        paragraphs.append(selected if selected is not None else last_candidate)
 
     paragraph_boundaries = []
     for index in range(len(paragraph_ranges) - 1):
