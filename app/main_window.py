@@ -19,6 +19,7 @@ from .dialogs.settings_dialog import SettingsDialog
 from .dialogs.time_tag_inspector import TimeTagInspector
 from .services.part_extractor import extract_parts as extract_part_names
 from .services.update_service import get_latest_release as fetch_latest_release
+from .services.page_optimizer import fixed_pages, optimize_pages
 from .settings_store import default_settings, load_settings_data, write_settings
 
 class LyricsFormatter:
@@ -39,7 +40,16 @@ class LyricsFormatter:
             sort_by_first_tag,
             check_update_on_start,
             part_start_char,
-            part_end_char
+            part_end_char,
+            nkm_settings_path,
+            pre_wipe_ms,
+            post_wipe_ms,
+            interval_ms,
+            manual_protection_enabled,
+            manual_protection_ms,
+            page_adjustment_mode,
+            min_page_lines,
+            max_page_lines
         ) = self.load_settings()
 
         self.sort_by_first_tag = tk.BooleanVar(
@@ -81,6 +91,16 @@ class LyricsFormatter:
         self.part_end_char = tk.StringVar(
             value=part_end_char
         )
+
+        self.nkm_settings_path = tk.StringVar(value=nkm_settings_path)
+        self.pre_wipe_ms = tk.IntVar(value=pre_wipe_ms)
+        self.post_wipe_ms = tk.IntVar(value=post_wipe_ms)
+        self.interval_ms = tk.IntVar(value=interval_ms)
+        self.manual_protection_enabled = tk.BooleanVar(value=manual_protection_enabled)
+        self.manual_protection_ms = tk.IntVar(value=manual_protection_ms)
+        self.page_adjustment_mode = tk.StringVar(value=page_adjustment_mode)
+        self.min_page_lines = tk.IntVar(value=min_page_lines)
+        self.max_page_lines = tk.IntVar(value=max_page_lines)
 
         self.areas = []
         
@@ -283,7 +303,16 @@ class LyricsFormatter:
             data["sort_by_first_tag"],
             data["check_update_on_start"],
             data["part_start_char"],
-            data["part_end_char"]
+            data["part_end_char"],
+            data["nkm_settings_path"],
+            data["pre_wipe_ms"],
+            data["post_wipe_ms"],
+            data["interval_ms"],
+            data["manual_protection_enabled"],
+            data["manual_protection_ms"],
+            data["page_adjustment_mode"],
+            data["min_page_lines"],
+            data["max_page_lines"]
         )
 
     def save_settings(self):
@@ -301,7 +330,16 @@ class LyricsFormatter:
             "sort_by_first_tag": self.sort_by_first_tag.get(),
             "check_update_on_start": self.check_update_on_start.get(),
             "part_start_char": self.part_start_char.get(),
-            "part_end_char": self.part_end_char.get()
+            "part_end_char": self.part_end_char.get(),
+            "nkm_settings_path": self.nkm_settings_path.get(),
+            "pre_wipe_ms": self.pre_wipe_ms.get(),
+            "post_wipe_ms": self.post_wipe_ms.get(),
+            "interval_ms": self.interval_ms.get(),
+            "manual_protection_enabled": self.manual_protection_enabled.get(),
+            "manual_protection_ms": self.manual_protection_ms.get(),
+            "page_adjustment_mode": self.page_adjustment_mode.get(),
+            "min_page_lines": self.min_page_lines.get(),
+            "max_page_lines": self.max_page_lines.get()
         }
 
         write_settings(data)
@@ -1599,149 +1637,81 @@ class LyricsFormatter:
 
             return result
 
+    def get_nicokara_timing_settings(self):
+
+        protection = (
+            self.manual_protection_ms.get()
+            if self.manual_protection_enabled.get()
+            else min(self.pre_wipe_ms.get(), self.post_wipe_ms.get()) // 2
+        )
+
+        return {
+            "pre_wipe_ms": self.pre_wipe_ms.get(),
+            "post_wipe_ms": self.post_wipe_ms.get(),
+            "interval_ms": self.interval_ms.get(),
+            "effective_protection_ms": protection,
+        }
+
+    def build_page_result(self, lines, lengths):
+
+        result = []
+        position = 0
+
+        for page_length in lengths:
+            result.extend(lines[position:position + page_length])
+            position += page_length
+            if position < len(lines):
+                result.append("")
+
+        return result
+
+    def show_timing_report(self, plan, lines, mode):
+
+        reduced = [b for b in plan.boundaries if not b.timing.is_full]
+        title = "表示時間計算結果"
+
+        if not plan.boundaries:
+            messagebox.showinfo(title, "\n".join(summary) + "\n\n" + "\n\n".join(details[:30]))
+
     def auto_format(self):
 
-        try:
-
-            mm, ss, cs = (
-                self.threshold_var
-                .get()
-                .split(":")
-            )
-
-            threshold = (
-                int(mm) * 6000
-                +
-                int(ss) * 100
-                +
-                int(cs)
-            )
-
-        except Exception:
-
-            messagebox.showerror(
-                "エラー",
-                "閾値は mm:ss:SS"
-            )
-
-            return
-
-        #
-        # 入力取得（既存空行は除外）
-        #
-
         lines = [
-
             line.rstrip()
-
-            for line in
-            self.input_text.get(
-                "1.0",
-                "end"
-            ).splitlines()
-
+            for line in self.input_text.get("1.0", "end").splitlines()
             if line.strip()
         ]
 
-        #
-        # 必要なら最初のタイムタグ順に並べ替え
-        #
+        if not lines:
+            return
 
         if self.sort_by_first_tag.get():
+            lines = self.sort_lines_by_first_tag(lines)
 
-            lines = self.sort_lines_by_first_tag(
-                lines
+        times = [self.extract_times(line) for line in lines]
+        settings = self.get_nicokara_timing_settings()
+        mode = self.page_adjustment_mode.get()
+
+        if mode == "auto":
+            plan = optimize_pages(
+                times,
+                settings,
+                self.min_page_lines.get(),
+                self.max_page_lines.get(),
+            )
+        else:
+            plan = fixed_pages(
+                times,
+                settings,
+                int(self.line_count_var.get()),
             )
 
-        result = []
+        result = self.build_page_result(lines, plan.lengths)
 
-        line_count = int(
-            self.line_count_var.get()
-        )
-
-        #
-        # 直前の空行から何行追加したか
-        #
-
-        lines_in_block = 0
-
-        for index, line in enumerate(
-            lines
-        ):
-
-            result.append(
-                line
-            )
-
-            lines_in_block += 1
-
-            #
-            # 最終行の後ろには空行を追加しない
-            #
-
-            if index >= len(lines) - 1:
-
-                continue
-
-            current_line_times = self.extract_times(
-                line
-            )
-
-            next_line_times = self.extract_times(
-                lines[index + 1]
-            )
-
-            current_last_time = current_line_times[1]
-            next_first_time = next_line_times[0]
-
-            #
-            # 各隣接行を必ずしきい値判定
-            #
-
-            threshold_break = (
-                current_last_time is not None
-                and
-                next_first_time is not None
-                and
-                next_first_time - current_last_time >= threshold
-            )
-
-            #
-            # 設定行数に到達
-            #
-
-            line_count_break = (
-                lines_in_block >= line_count
-            )
-
-            if (
-                threshold_break
-                or
-                line_count_break
-            ):
-
-                result.append(
-                    ""
-                )
-
-                lines_in_block = 0
-
-        self.output_text.delete(
-            "1.0",
-            "end"
-        )
-
-        self.output_text.insert(
-            "1.0",
-            "\n".join(result)
-        )
-
-        self.refresh_visuals(
-            self.output_text,
-            self.areas[1][1]
-        )
-
+        self.output_text.delete("1.0", "end")
+        self.output_text.insert("1.0", "\n".join(result))
+        self.refresh_visuals(self.output_text, self.areas[1][1])
         self.copy_output()
+        self.show_timing_report(plan, lines, mode)
 
     def open_readme(self):
 

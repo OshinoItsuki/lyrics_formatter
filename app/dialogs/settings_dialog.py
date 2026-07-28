@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 from typing import TYPE_CHECKING
+
+from ..services.nicokara_settings import load_sta
 
 if TYPE_CHECKING:
     from ..main_window import LyricsFormatter
@@ -91,6 +93,16 @@ class SettingsDialog:
         self.part_end_char = tk.StringVar(
             value=self.app.part_end_char.get()
         )
+
+        self.nkm_settings_path = tk.StringVar(value=self.app.nkm_settings_path.get())
+        self.pre_wipe_ms = tk.IntVar(value=self.app.pre_wipe_ms.get())
+        self.post_wipe_ms = tk.IntVar(value=self.app.post_wipe_ms.get())
+        self.interval_ms = tk.IntVar(value=self.app.interval_ms.get())
+        self.manual_protection_enabled = tk.BooleanVar(value=self.app.manual_protection_enabled.get())
+        self.manual_protection_ms = tk.IntVar(value=self.app.manual_protection_ms.get())
+        self.page_adjustment_mode = tk.StringVar(value=self.app.page_adjustment_mode.get())
+        self.min_page_lines = tk.IntVar(value=self.app.min_page_lines.get())
+        self.max_page_lines = tk.IntVar(value=self.app.max_page_lines.get())
 
         #
         # メインフレーム
@@ -260,6 +272,62 @@ class SettingsDialog:
         )
 
         #
+        # ニコカラメーカー表示設定
+        #
+
+        timing_group = tk.LabelFrame(
+            main,
+            text="ニコカラメーカー表示設定",
+            padx=10,
+            pady=10
+        )
+        timing_group.pack(fill="x", pady=(0,10))
+
+        tk.Entry(
+            timing_group,
+            textvariable=self.nkm_settings_path,
+            width=44,
+            state="readonly"
+        ).grid(row=0, column=0, columnspan=3, sticky="ew")
+
+        tk.Button(
+            timing_group,
+            text="設定ファイルを読み込む...",
+            command=self.load_nicokara_settings
+        ).grid(row=0, column=3, padx=(8,0))
+
+        labels = (
+            ("ワイプ前の表示時間", self.pre_wipe_ms),
+            ("ワイプ後の表示時間", self.post_wipe_ms),
+            ("歌詞の表示間隔", self.interval_ms),
+        )
+        for row, (text, variable) in enumerate(labels, 1):
+            tk.Label(timing_group, text=text).grid(row=row, column=0, sticky="w", pady=(6,0))
+            tk.Entry(timing_group, textvariable=variable, width=8, justify="right").grid(row=row, column=1, sticky="w", pady=(6,0))
+            tk.Label(timing_group, text="ms").grid(row=row, column=2, sticky="w", pady=(6,0))
+
+        tk.Checkbutton(
+            timing_group,
+            text="切り替え時間が短い場合の表示保護時間を手動設定する",
+            variable=self.manual_protection_enabled
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(8,0))
+
+        tk.Label(timing_group, text="表示保護時間").grid(row=5, column=0, sticky="w", pady=(6,0))
+        tk.Entry(timing_group, textvariable=self.manual_protection_ms, width=8, justify="right").grid(row=5, column=1, sticky="w", pady=(6,0))
+        tk.Label(timing_group, text="ms").grid(row=5, column=2, sticky="w", pady=(6,0))
+
+        mode_frame = tk.Frame(timing_group)
+        mode_frame.grid(row=6, column=0, columnspan=4, sticky="w", pady=(10,0))
+        tk.Label(mode_frame, text="ページ行数調整：").pack(side="left")
+        tk.Radiobutton(mode_frame, text="提案", value="proposal", variable=self.page_adjustment_mode).pack(side="left")
+        tk.Radiobutton(mode_frame, text="自動調整", value="auto", variable=self.page_adjustment_mode).pack(side="left")
+        tk.Label(mode_frame, text="  最小").pack(side="left")
+        tk.Spinbox(mode_frame, from_=2, to=4, width=3, textvariable=self.min_page_lines).pack(side="left")
+        tk.Label(mode_frame, text="行  最大").pack(side="left")
+        tk.Spinbox(mode_frame, from_=2, to=4, width=3, textvariable=self.max_page_lines).pack(side="left")
+        tk.Label(mode_frame, text="行").pack(side="left")
+
+        #
         # タイムタグ検査設定
         #
 
@@ -319,6 +387,39 @@ class SettingsDialog:
 
         self.app.center_window(
             self.window
+        )
+
+    def load_nicokara_settings(self):
+
+        path = filedialog.askopenfilename(
+            parent=self.window,
+            title="ニコカラメーカー設定ファイルを選択",
+            filetypes=(("設定バックアップ", "*.sta"), ("すべてのファイル", "*.*"))
+        )
+        if not path:
+            return
+
+        try:
+            settings = load_sta(path)
+        except Exception as exc:
+            messagebox.showerror("読み込みエラー", str(exc), parent=self.window)
+            return
+
+        self.nkm_settings_path.set(path)
+        self.pre_wipe_ms.set(settings.pre_wipe_ms)
+        self.post_wipe_ms.set(settings.post_wipe_ms)
+        self.interval_ms.set(settings.interval_ms)
+        self.manual_protection_enabled.set(settings.manual_protection_enabled)
+        self.manual_protection_ms.set(settings.manual_protection_ms)
+
+        effective = settings.effective_protection_ms
+        messagebox.showinfo(
+            "読み込み完了",
+            f"ワイプ前：{settings.pre_wipe_ms} ms\n"
+            f"ワイプ後：{settings.post_wipe_ms} ms\n"
+            f"表示間隔：{settings.interval_ms} ms\n"
+            f"表示保護：{'手動 ' + str(settings.manual_protection_ms) + ' ms' if settings.manual_protection_enabled else '手動設定なし（計算値 ' + str(effective) + ' ms）'}",
+            parent=self.window
         )
 
     def apply(self):
@@ -381,6 +482,37 @@ class SettingsDialog:
         self.app.part_end_char.set(
             part_end_char
         )
+
+        try:
+            pre = int(self.pre_wipe_ms.get())
+            post = int(self.post_wipe_ms.get())
+            interval = int(self.interval_ms.get())
+            protect = int(self.manual_protection_ms.get())
+            minimum = int(self.min_page_lines.get())
+            maximum = int(self.max_page_lines.get())
+        except (TypeError, ValueError, tk.TclError):
+            messagebox.showerror("設定エラー", "表示時間と行数には整数を指定してください。", parent=self.window)
+            return
+
+        if min(pre, post, interval, protect) < 0:
+            messagebox.showerror("設定エラー", "表示時間には0以上を指定してください。", parent=self.window)
+            return
+        if self.manual_protection_enabled.get() and protect > min(pre, post):
+            messagebox.showerror("設定エラー", "表示保護時間はワイプ前後の短い方以下にしてください。", parent=self.window)
+            return
+        if not (2 <= minimum <= maximum <= 4):
+            messagebox.showerror("設定エラー", "ページ行数は2～4行で、最小≦最大にしてください。", parent=self.window)
+            return
+
+        self.app.nkm_settings_path.set(self.nkm_settings_path.get())
+        self.app.pre_wipe_ms.set(pre)
+        self.app.post_wipe_ms.set(post)
+        self.app.interval_ms.set(interval)
+        self.app.manual_protection_enabled.set(self.manual_protection_enabled.get())
+        self.app.manual_protection_ms.set(protect)
+        self.app.page_adjustment_mode.set(self.page_adjustment_mode.get())
+        self.app.min_page_lines.set(minimum)
+        self.app.max_page_lines.set(maximum)
 
         #
         # JSONへ保存
