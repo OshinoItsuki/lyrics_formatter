@@ -182,6 +182,55 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
     return segments
 
 
+
+def _separate_terminal_single_line(segments, paragraph_end):
+    """段落末の1行ページを、そのまま独立した区間として保持する。
+
+    行数を増やした区間の末尾に1行だけ残っても、次が段落区切りなら
+    その1行で歌詞表示が終了するため問題ない。前ページから行を移して
+    2行・3行などへ均等化する再配分は行わない。
+    """
+    if not segments:
+        return segments
+
+    last = segments[-1]
+    segment_size = last.end - last.start + 1
+
+    if (
+        last.end != paragraph_end
+        or last.line_count <= 1
+        or segment_size <= 1
+        or segment_size % last.line_count != 1
+    ):
+        return segments
+
+    terminal_index = last.end
+    main_end = terminal_index - 1
+
+    main_segment = ParagraphEvaluation(
+        start=last.start,
+        end=main_end,
+        line_count=last.line_count,
+        replacements=[
+            item for item in last.replacements
+            if item.next_index <= main_end
+        ],
+        changed=last.changed,
+        paragraph_start=last.paragraph_start,
+        paragraph_end=last.paragraph_end,
+    )
+    terminal_segment = ParagraphEvaluation(
+        start=terminal_index,
+        end=terminal_index,
+        line_count=1,
+        replacements=[],
+        changed=False,
+        paragraph_start=last.paragraph_start,
+        paragraph_end=last.paragraph_end,
+    )
+
+    return [*segments[:-1], main_segment, terminal_segment]
+
 def build_plan(times, paragraph_ranges, settings, base_lines=2, max_lines=4, optimize=False) -> PagePlan:
     """同時表示行数を、段落内の必要箇所から段階的に増やす。
 
@@ -201,15 +250,18 @@ def build_plan(times, paragraph_ranges, settings, base_lines=2, max_lines=4, opt
         effective_base = min(base_lines, max(2, paragraph_size))
 
         if optimize:
+            paragraph_segments = _optimize_paragraph(
+                times,
+                start,
+                end,
+                settings,
+                effective_base,
+                max_lines,
+            )
+            # 段落末に1行だけ残る場合も、そのまま1行ページとして採用する。
+            # 前ページから行を移す再配分は行わない。
             segments.extend(
-                _optimize_paragraph(
-                    times,
-                    start,
-                    end,
-                    settings,
-                    effective_base,
-                    max_lines,
-                )
+                _separate_terminal_single_line(paragraph_segments, end)
             )
         else:
             segments.append(
