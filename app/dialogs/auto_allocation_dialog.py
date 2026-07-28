@@ -56,8 +56,8 @@ class AutoAllocationDialog:
         ).pack(side="left", padx=18)
         tk.Label(top, text="赤字＝時間削減　黄色＝行数変更").pack(side="right")
 
-        legend = tk.Frame(self.window, padx=10, pady=(0, 6))
-        legend.pack(fill="x")
+        legend = tk.Frame(self.window, padx=10)
+        legend.pack(fill="x", pady=(0, 6))
         tk.Label(legend, text="━  ページ区切り", font=("Yu Gothic UI", 9, "bold")).pack(side="left", padx=(0, 18))
         tk.Label(legend, text="━━  段落区切り", font=("Yu Gothic UI", 9, "bold")).pack(side="left")
 
@@ -193,8 +193,8 @@ class AutoAllocationDialog:
                         second.grid_propagate(False)
                         row_no += 1
 
-        bottom = tk.Frame(self.window, padx=10, pady=(0, 10))
-        bottom.pack(fill="x")
+        bottom = tk.Frame(self.window, padx=10)
+        bottom.pack(fill="x", pady=(0, 10))
         text = "提案モードのため出力欄は変更していません。" if mode == "proposal" else "自動調整結果を出力欄へ反映しました。"
         tk.Label(bottom, text=text, fg="#555555").pack(side="left")
         tk.Button(bottom, text="閉じる", width=12, command=self.window.destroy).pack(side="right")
