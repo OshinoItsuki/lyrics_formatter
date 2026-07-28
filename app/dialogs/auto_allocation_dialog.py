@@ -222,7 +222,7 @@ class AutoAllocationDialog:
         changed_count = sum(1 for paragraph in self.plan.paragraphs if paragraph.changed)
         reduced_count = sum(1 for boundary in self.plan.boundaries if not boundary.timing.is_full)
         self.status_var.set(
-            f"必要時間 {requested} ms　段落 {len(self.plan.paragraphs)}件　"
+            f"必要時間 {requested} ms　段落 {getattr(self.plan, 'source_paragraph_count', len(self.plan.paragraphs))}件　"
             f"行数変更 {changed_count}件　表示時間削減 {reduced_count}件"
         )
 
@@ -316,7 +316,7 @@ class AutoAllocationDialog:
                     label.grid(row=row_no, column=col, sticky="nsew")
                 row_no += 1
 
-                is_paragraph_end = index == paragraph.end
+                is_paragraph_end = index == getattr(paragraph, "paragraph_end", paragraph.end)
                 is_page_break = not is_paragraph_end and (offset + 1) % paragraph.line_count == 0
                 if is_page_break or is_paragraph_end:
                     row_no = self._add_separator(row_no, double=is_paragraph_end)

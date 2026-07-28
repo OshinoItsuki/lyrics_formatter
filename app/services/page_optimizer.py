@@ -14,11 +14,22 @@ class ReplacementEvaluation:
 
 @dataclass
 class ParagraphEvaluation:
+    """同じ同時表示行数を使う、段落内の連続区間。"""
+
     start: int
     end: int
     line_count: int
     replacements: list[ReplacementEvaluation] = field(default_factory=list)
     changed: bool = False
+    # 元の段落範囲。段落内で行数を増やした場合も保持する。
+    paragraph_start: int | None = None
+    paragraph_end: int | None = None
+
+    def __post_init__(self):
+        if self.paragraph_start is None:
+            self.paragraph_start = self.start
+        if self.paragraph_end is None:
+            self.paragraph_end = self.end
 
 
 @dataclass
@@ -30,12 +41,14 @@ class ParagraphBoundary:
 
 @dataclass
 class PagePlan:
+    # 互換性のため名称は paragraphs のまま。実体は「行数が一定の区間」。
     paragraphs: list[ParagraphEvaluation]
     paragraph_boundaries: list[ParagraphBoundary]
+    source_paragraph_count: int = 0
 
     @property
     def lengths(self) -> list[int]:
-        """互換用。各段落で採用した同時表示行数を返す。"""
+        """各連続区間で採用した同時表示行数を返す。"""
         return [paragraph.line_count for paragraph in self.paragraphs]
 
     @property
@@ -65,12 +78,17 @@ def _simulate_between(times, previous_index, next_index, settings) -> TimingResu
     )
 
 
-def _timing_cost(timing: TimingResult) -> int:
-    severity_penalty = [0, 100_000, 300_000, 600_000, 1_000_000, 5_000_000][timing.severity]
-    return severity_penalty + timing.reduction_ms * 100 + timing.forced_cut_ms * 1000
-
-
-def _evaluate_paragraph(times, start, end, line_count, settings, base_lines):
+def _evaluate_segment(
+    times,
+    start,
+    end,
+    line_count,
+    settings,
+    base_lines,
+    paragraph_start,
+    paragraph_end,
+):
+    """同じ表示枠へ入る行同士（n行前）を比較する。"""
     replacements = []
     for next_index in range(start + line_count, end + 1):
         previous_index = next_index - line_count
@@ -87,47 +105,125 @@ def _evaluate_paragraph(times, start, end, line_count, settings, base_lines):
         line_count=line_count,
         replacements=replacements,
         changed=line_count != base_lines,
+        paragraph_start=paragraph_start,
+        paragraph_end=paragraph_end,
     )
 
 
-def build_plan(times, paragraph_ranges, settings, base_lines=2, max_lines=4, optimize=False) -> PagePlan:
-    """段落ごとの同時表示行数を決定する。
+def _protection_is_preserved(timing: TimingResult) -> bool:
+    """間隔・ワイプ前後の削減は許容し、保護時間の削減は不可とする。"""
+    return timing.forced_cut_ms == 0 and timing.severity <= 3
 
-    自動調整時は必ず基準行数を最優先する。基準行数で全境界の
-    表示時間を維持できなければ1行ずつ増やし、最初に削減なしに
-    できた行数を採用する。最大行数でも維持できない場合のみ、
-    最大行数の構成にニコカラメーカーの削減ルールを適用する。
+
+def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
+    """段落を先頭から処理し、必要になった位置以降だけ行数を増やす。
+
+    基準行数の表示枠を循環利用し、同じ枠の前行と次行を比較する。
+    保護時間を維持できない最初の置換が見つかった場合、その置換を
+    含むページの先頭から表示枠を1つ増やして再計算する。
+    """
+    paragraph_size = end - start + 1
+    current_start = start
+    current_lines = min(base_lines, max(2, paragraph_size))
+    upper = min(max_lines, max(2, paragraph_size))
+    segments = []
+
+    while current_start <= end:
+        candidate = _evaluate_segment(
+            times,
+            current_start,
+            end,
+            current_lines,
+            settings,
+            base_lines,
+            start,
+            end,
+        )
+
+        unacceptable = next(
+            (
+                item
+                for item in candidate.replacements
+                if not _protection_is_preserved(item.timing)
+            ),
+            None,
+        )
+
+        # 問題なし、または最大行数まで増やした後はこの構成を採用する。
+        if unacceptable is None or current_lines >= upper:
+            segments.append(candidate)
+            break
+
+        # 問題のある次行を含む、現在のページ先頭から行数を増やす。
+        page_offset = (unacceptable.next_index - current_start) // current_lines
+        next_segment_start = current_start + page_offset * current_lines
+
+        # 通常は起こらないが、無限ループ防止として同位置ならその場で増やす。
+        if next_segment_start <= current_start:
+            current_lines += 1
+            continue
+
+        previous_segment_end = next_segment_start - 1
+        segments.append(
+            _evaluate_segment(
+                times,
+                current_start,
+                previous_segment_end,
+                current_lines,
+                settings,
+                base_lines,
+                start,
+                end,
+            )
+        )
+        current_start = next_segment_start
+        current_lines += 1
+
+    return segments
+
+
+def build_plan(times, paragraph_ranges, settings, base_lines=2, max_lines=4, optimize=False) -> PagePlan:
+    """同時表示行数を、段落内の必要箇所から段階的に増やす。
+
+    1. 基準行数の表示枠を使う。
+    2. 同じ表示枠へ入る n 行前との表示時間を比較する。
+    3. 間隔・ワイプ前・ワイプ後の削減だけで保護時間を維持できる間は
+       基準行数を保つ。
+    4. 保護時間の削減または強制終了が必要になる位置で1行増やす。
+    5. 最大行数でも不足する場合のみ、最大行数のまま全削減を許容する。
     """
     base_lines = max(2, int(base_lines))
     max_lines = max(base_lines, int(max_lines))
-    paragraphs = []
+    segments = []
 
     for start, end in paragraph_ranges:
         paragraph_size = end - start + 1
         effective_base = min(base_lines, max(2, paragraph_size))
-        upper = min(max_lines, max(2, paragraph_size))
 
-        if not optimize:
-            paragraphs.append(
-                _evaluate_paragraph(
-                    times, start, end, effective_base, settings, base_lines
+        if optimize:
+            segments.extend(
+                _optimize_paragraph(
+                    times,
+                    start,
+                    end,
+                    settings,
+                    effective_base,
+                    max_lines,
                 )
             )
-            continue
-
-        selected = None
-        last_candidate = None
-        for line_count in range(effective_base, upper + 1):
-            candidate = _evaluate_paragraph(
-                times, start, end, line_count, settings, base_lines
+        else:
+            segments.append(
+                _evaluate_segment(
+                    times,
+                    start,
+                    end,
+                    effective_base,
+                    settings,
+                    base_lines,
+                    start,
+                    end,
+                )
             )
-            last_candidate = candidate
-            if all(item.timing.is_full for item in candidate.replacements):
-                selected = candidate
-                break
-
-        # 最大行数まで増やしても守れない場合は、最大行数で削減する。
-        paragraphs.append(selected if selected is not None else last_candidate)
 
     paragraph_boundaries = []
     for index in range(len(paragraph_ranges) - 1):
@@ -141,7 +237,11 @@ def build_plan(times, paragraph_ranges, settings, base_lines=2, max_lines=4, opt
             )
         )
 
-    return PagePlan(paragraphs=paragraphs, paragraph_boundaries=paragraph_boundaries)
+    return PagePlan(
+        paragraphs=segments,
+        paragraph_boundaries=paragraph_boundaries,
+        source_paragraph_count=len(paragraph_ranges),
+    )
 
 
 def fixed_pages(times, settings, line_count, paragraph_ranges=None) -> PagePlan:
