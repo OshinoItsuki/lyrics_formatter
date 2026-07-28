@@ -1915,38 +1915,34 @@ class LyricsFormatter:
         times = [self.extract_times(line) for line in lines]
         settings = self.get_nicokara_timing_settings()
         paragraph_ranges = self.get_paragraph_ranges(lines, threshold)
-        mode = self.page_adjustment_mode.get()
 
-        if mode == "auto":
-            plan = optimize_pages(
-                times,
-                settings,
-                min_lines=2,
-                max_lines=maximum,
-                paragraph_ranges=paragraph_ranges,
-                base_lines=base_lines,
-            )
-            result = self.build_allocation_result(lines, plan)
-            self.output_text.delete("1.0", "end")
-            self.output_text.insert("1.0", "\n".join(result))
-            self.refresh_visuals(self.output_text, self.areas[1][1])
-            self.copy_output()
-        else:
-            # 提案モードは出力を変えず、各段落で基準行数を使った結果を表示する。
-            # 改善可能な段落だけ、最適行数へ置き換えて黄色で強調する。
+        def calculate(mode, selected_base_lines, selected_maximum):
+            selected_base_lines = max(2, int(selected_base_lines))
+            selected_maximum = max(selected_base_lines, int(selected_maximum))
+
+            if mode == "auto":
+                return optimize_pages(
+                    times,
+                    settings,
+                    min_lines=2,
+                    max_lines=selected_maximum,
+                    paragraph_ranges=paragraph_ranges,
+                    base_lines=selected_base_lines,
+                ), settings
+
             fixed_plan = fixed_pages(
                 times,
                 settings,
-                base_lines,
+                selected_base_lines,
                 paragraph_ranges=paragraph_ranges,
             )
             suggested_plan = optimize_pages(
                 times,
                 settings,
                 min_lines=2,
-                max_lines=maximum,
+                max_lines=selected_maximum,
                 paragraph_ranges=paragraph_ranges,
-                base_lines=base_lines,
+                base_lines=selected_base_lines,
             )
 
             for fixed, suggested in zip(fixed_plan.paragraphs, suggested_plan.paragraphs):
@@ -1961,16 +1957,32 @@ class LyricsFormatter:
                 if suggested_cost < fixed_cost:
                     fixed.line_count = suggested.line_count
                     fixed.replacements = suggested.replacements
-                    fixed.changed = suggested.line_count != base_lines
+                    fixed.changed = suggested.line_count != selected_base_lines
 
-            plan = fixed_plan
+            return fixed_plan, settings
+
+        def apply_plan(plan, selected_mode, selected_base_lines, selected_maximum):
+            result = self.build_allocation_result(lines, plan)
+            self.output_text.delete("1.0", "end")
+            self.output_text.insert("1.0", "\n".join(result))
+            self.refresh_visuals(self.output_text, self.areas[1][1])
+            self.copy_output()
+            self.page_adjustment_mode.set(selected_mode)
+            self.line_count_var.set(str(selected_base_lines))
+            self.max_page_lines.set(selected_maximum)
+
+        mode = self.page_adjustment_mode.get()
+        plan, settings = calculate(mode, base_lines, maximum)
 
         self.auto_allocation_dialog.show(
             lines,
             plan,
             mode,
             base_lines,
-            settings
+            settings,
+            maximum,
+            calculate,
+            apply_plan,
         )
 
     def open_readme(self):
