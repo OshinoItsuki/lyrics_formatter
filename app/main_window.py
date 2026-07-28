@@ -48,6 +48,7 @@ class LyricsFormatter:
             interval_ms,
             manual_protection_enabled,
             manual_protection_ms,
+            auto_allocation_base_lines,
             page_adjustment_mode,
             min_page_lines,
             max_page_lines
@@ -99,6 +100,7 @@ class LyricsFormatter:
         self.interval_ms = tk.IntVar(value=interval_ms)
         self.manual_protection_enabled = tk.BooleanVar(value=manual_protection_enabled)
         self.manual_protection_ms = tk.IntVar(value=manual_protection_ms)
+        self.auto_allocation_base_lines = tk.IntVar(value=auto_allocation_base_lines)
         self.page_adjustment_mode = tk.StringVar(value=page_adjustment_mode)
         self.min_page_lines = tk.IntVar(value=min_page_lines)
         self.max_page_lines = tk.IntVar(value=max_page_lines)
@@ -312,6 +314,7 @@ class LyricsFormatter:
             data["interval_ms"],
             data["manual_protection_enabled"],
             data["manual_protection_ms"],
+            data["auto_allocation_base_lines"],
             data["page_adjustment_mode"],
             data["min_page_lines"],
             data["max_page_lines"]
@@ -339,6 +342,7 @@ class LyricsFormatter:
             "interval_ms": self.interval_ms.get(),
             "manual_protection_enabled": self.manual_protection_enabled.get(),
             "manual_protection_ms": self.manual_protection_ms.get(),
+            "auto_allocation_base_lines": self.auto_allocation_base_lines.get(),
             "page_adjustment_mode": self.page_adjustment_mode.get(),
             "min_page_lines": self.min_page_lines.get(),
             "max_page_lines": self.max_page_lines.get()
@@ -1900,7 +1904,7 @@ class LyricsFormatter:
         try:
             mm, ss, cs = self.threshold_var.get().split(":")
             threshold = int(mm) * 6000 + int(ss) * 100 + int(cs)
-            base_lines = int(self.line_count_var.get())
+            base_lines = int(self.auto_allocation_base_lines.get())
             maximum = int(self.max_page_lines.get())
             if base_lines < 2 or maximum < 2:
                 raise ValueError
@@ -1908,7 +1912,7 @@ class LyricsFormatter:
         except Exception:
             messagebox.showerror(
                 "自動割付",
-                "閾値は mm:ss:SS、区切り行数と最大行数は2以上の整数で指定してください。"
+                "閾値は mm:ss:SS、自動割付の基準行数と最大行数は2以上の整数で指定してください。"
             )
             return
 
@@ -1934,8 +1938,9 @@ class LyricsFormatter:
             self.output_text.insert("1.0", "\n".join(result))
             self.refresh_visuals(self.output_text, self.areas[1][1])
             self.copy_output()
-            self.line_count_var.set(str(selected_base_lines))
+            self.auto_allocation_base_lines.set(selected_base_lines)
             self.max_page_lines.set(selected_maximum)
+            self.save_settings()
 
         plan, settings = calculate(base_lines, maximum)
 

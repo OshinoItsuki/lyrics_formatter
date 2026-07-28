@@ -4,5 +4,13 @@
   "window_geometry": "1093x734+-1274+-35",
   "inspector_geometry": "220x400+1128+191",
   "ignore_first_tag_error": true,
-  "sort_by_first_tag": true
+  "sort_by_first_tag": true,
+  "auto_allocation_base_lines": 2,
+  "nkm_settings_path": "",
+  "pre_wipe_ms": 1500,
+  "post_wipe_ms": 700,
+  "interval_ms": 400,
+  "manual_protection_enabled": false,
+  "manual_protection_ms": 0,
+  "max_page_lines": 4
 }

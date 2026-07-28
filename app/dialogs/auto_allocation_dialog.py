@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from ..config import TIME_PATTERN
+from .auto_allocation_settings_dialog import AutoAllocationSettingsDialog
 
 
 def _format_ms(value: int | None) -> str:
@@ -50,6 +51,7 @@ class AutoAllocationDialog:
         self.apply_callback = None
         self.base_lines_var = tk.StringVar(value="2")
         self.max_lines_var = tk.StringVar(value="4")
+        self.settings_dialog = AutoAllocationSettingsDialog(app)
         self.status_var = tk.StringVar(value="")
         self.body_canvas = None
         self.header_canvas = None
@@ -87,23 +89,15 @@ class AutoAllocationDialog:
         controls = tk.LabelFrame(self.window, text="割付条件", padx=10, pady=8)
         controls.pack(fill="x", padx=10, pady=(10, 6))
 
-        tk.Label(controls, text="基準行数").grid(row=0, column=0, sticky="e")
-        tk.Spinbox(
-            controls, from_=2, to=999, width=5,
-            textvariable=self.base_lines_var,
-        ).grid(row=0, column=1, padx=(6, 16))
+        self.conditions_var = tk.StringVar()
+        tk.Label(controls, textvariable=self.conditions_var, anchor="w").grid(row=0, column=0, sticky="w")
+        controls.grid_columnconfigure(0, weight=1)
 
-        tk.Label(controls, text="最大行数").grid(row=0, column=2, sticky="e")
-        tk.Spinbox(
-            controls, from_=2, to=999, width=5,
-            textvariable=self.max_lines_var,
-        ).grid(row=0, column=3, padx=(6, 18))
-
-        tk.Button(controls, text="再計算", width=12, command=self._recalculate).grid(row=0, column=4, padx=(0, 8))
-        self.apply_button = tk.Button(controls, width=16, command=self._apply)
-        self.apply_button.grid(row=0, column=5, padx=(0, 8))
-        tk.Button(controls, text="閉じる", width=12, command=self.window.destroy).grid(row=0, column=6)
-        controls.grid_columnconfigure(7, weight=1)
+        tk.Button(controls, text="割付設定", width=12, command=self._open_settings).grid(row=0, column=1, padx=(8, 8))
+        tk.Button(controls, text="再計算", width=12, command=self._recalculate).grid(row=0, column=2, padx=(0, 8))
+        self.apply_button = tk.Button(controls, width=12, command=self._apply)
+        self.apply_button.grid(row=0, column=3, padx=(0, 8))
+        tk.Button(controls, text="閉じる", width=12, command=self.window.destroy).grid(row=0, column=4)
 
         summary = tk.Frame(self.window, padx=10)
         summary.pack(fill="x", pady=(0, 5))
@@ -117,7 +111,23 @@ class AutoAllocationDialog:
 
         self._build_table_host()
         self.apply_button.configure(text="反映")
+        self._refresh_conditions_text()
         self._render()
+
+    def _refresh_conditions_text(self):
+        self.conditions_var.set(
+            f"基準 {self.base_lines_var.get()}行　最大 {self.max_lines_var.get()}行　"
+            f"ワイプ前 {self.settings['pre_wipe_ms']} ms　ワイプ後 {self.settings['post_wipe_ms']} ms　"
+            f"表示間隔 {self.settings['interval_ms']} ms"
+        )
+
+    def _open_settings(self):
+        self.settings_dialog.show(on_applied=self._settings_applied)
+
+    def _settings_applied(self):
+        self.base_lines_var.set(str(self.app.auto_allocation_base_lines.get()))
+        self.max_lines_var.set(str(self.app.max_page_lines.get()))
+        self._recalculate()
 
     def _build_table_host(self):
         table_host = tk.Frame(self.window)
@@ -193,8 +203,9 @@ class AutoAllocationDialog:
         except Exception as exc:
             messagebox.showerror("自動割付", f"再計算に失敗しました。\n\n{exc}", parent=self.window)
             return
-        self.app.line_count_var.set(str(base_lines))
+        self.app.auto_allocation_base_lines.set(base_lines)
         self.app.max_page_lines.set(maximum)
+        self._refresh_conditions_text()
         self._render()
 
     def _apply(self):
@@ -208,8 +219,9 @@ class AutoAllocationDialog:
         except Exception as exc:
             messagebox.showerror("自動割付", f"割付結果の反映に失敗しました。\n\n{exc}", parent=self.window)
             return
-        self.app.line_count_var.set(str(base_lines))
+        self.app.auto_allocation_base_lines.set(base_lines)
         self.app.max_page_lines.set(maximum)
+        self._refresh_conditions_text()
         self._render()
         messagebox.showinfo("自動割付", "割付結果を出力欄へ反映しました。", parent=self.window)
 
