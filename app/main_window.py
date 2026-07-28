@@ -1665,13 +1665,78 @@ class LyricsFormatter:
 
         return result
 
-    def show_timing_report(self, plan, lines, mode):
+    def show_timing_report(self, plan, lines, mode, suggested_plan=None):
 
-        reduced = [b for b in plan.boundaries if not b.timing.is_full]
         title = "表示時間計算結果"
+        requested = (
+            self.pre_wipe_ms.get()
+            + self.post_wipe_ms.get()
+            + self.interval_ms.get()
+        )
 
-        if not plan.boundaries:
-            messagebox.showinfo(title, "\n".join(summary) + "\n\n" + "\n\n".join(details[:30]))
+        def page_range_text(boundary):
+            return (
+                f"{boundary.page_start + 1}～{boundary.page_end + 1}行目"
+                f" → {boundary.next_start + 1}行目"
+            )
+
+        def timing_detail(boundary):
+            timing = boundary.timing
+            status = "削減なし" if timing.is_full else f"{timing.reduction_ms} ms削減"
+            if timing.forced_cut_ms > 0:
+                status += f"／強制終了相当 {timing.forced_cut_ms} ms"
+            return (
+                f"{page_range_text(boundary)}\n"
+                f"  使用可能：{timing.available_ms} ms（必要：{timing.requested_ms} ms）\n"
+                f"  実適用：ワイプ前 {timing.pre_ms} ms／"
+                f"ワイプ後 {timing.post_ms} ms／間隔 {timing.interval_ms} ms\n"
+                f"  判定：{status}"
+            )
+
+        reduced = [boundary for boundary in plan.boundaries if not boundary.timing.is_full]
+        summary = [
+            f"モード：{'自動調整' if mode == 'auto' else '提案'}",
+            f"ページ構成：{' / '.join(str(length) + '行' for length in plan.lengths)}",
+            f"設定上の必要時間：{requested} ms",
+            f"ページ境界：{len(plan.boundaries)}箇所",
+            f"削減あり：{len(reduced)}箇所",
+        ]
+
+        details = [timing_detail(boundary) for boundary in plan.boundaries]
+
+        if mode == "proposal" and suggested_plan is not None:
+            current_lengths = plan.lengths
+            suggested_lengths = suggested_plan.lengths
+            current_reduction = sum(
+                boundary.timing.reduction_ms + boundary.timing.forced_cut_ms
+                for boundary in plan.boundaries
+            )
+            suggested_reduction = sum(
+                boundary.timing.reduction_ms + boundary.timing.forced_cut_ms
+                for boundary in suggested_plan.boundaries
+            )
+
+            summary.append("")
+            if suggested_lengths != current_lengths and suggested_reduction < current_reduction:
+                summary.extend((
+                    "【行数変更の提案あり】",
+                    f"現在：{' / '.join(str(length) + '行' for length in current_lengths)}",
+                    f"提案：{' / '.join(str(length) + '行' for length in suggested_lengths)}",
+                    f"削減量：{current_reduction} ms → {suggested_reduction} ms",
+                ))
+            else:
+                summary.append("現在のページ構成から変更する必要はありません。")
+
+        if not details:
+            details.append("ページ境界がないため、表示時間の比較対象はありません。")
+
+        # ダイアログが縦長になりすぎないよう、詳細は先頭30境界まで表示する。
+        omitted = max(0, len(details) - 30)
+        message = "\n".join(summary) + "\n\n" + "\n\n".join(details[:30])
+        if omitted:
+            message += f"\n\nほか {omitted} 箇所"
+
+        messagebox.showinfo(title, message)
 
     def auto_format(self):
 
@@ -1691,6 +1756,8 @@ class LyricsFormatter:
         settings = self.get_nicokara_timing_settings()
         mode = self.page_adjustment_mode.get()
 
+        suggested_plan = None
+
         if mode == "auto":
             plan = optimize_pages(
                 times,
@@ -1704,6 +1771,12 @@ class LyricsFormatter:
                 settings,
                 int(self.line_count_var.get()),
             )
+            suggested_plan = optimize_pages(
+                times,
+                settings,
+                self.min_page_lines.get(),
+                self.max_page_lines.get(),
+            )
 
         result = self.build_page_result(lines, plan.lengths)
 
@@ -1711,7 +1784,7 @@ class LyricsFormatter:
         self.output_text.insert("1.0", "\n".join(result))
         self.refresh_visuals(self.output_text, self.areas[1][1])
         self.copy_output()
-        self.show_timing_report(plan, lines, mode)
+        self.show_timing_report(plan, lines, mode, suggested_plan)
 
     def open_readme(self):
 
