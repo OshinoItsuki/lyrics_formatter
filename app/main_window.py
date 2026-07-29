@@ -1776,6 +1776,11 @@ class LyricsFormatter:
                 if result and result[-1] != "":
                     result.append("")
 
+        # 比較時に不可視差分が出ないよう、末尾の空行は出力しない。
+        # 各歌詞行はauto_allocate側でrstrip済み。
+        while result and result[-1] == "":
+            result.pop()
+
         return result
 
     def show_timing_report(self, plan, lines, mode, suggested_plan=None):
