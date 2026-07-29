@@ -110,9 +110,35 @@ def _evaluate_segment(
     )
 
 
-def _protection_is_preserved(timing: TimingResult) -> bool:
-    """間隔・ワイプ前後の削減は許容し、保護時間の削減は不可とする。"""
-    return timing.forced_cut_ms == 0 and timing.severity <= 3
+def _minimum_readable_pre_ms(settings) -> int:
+    """次の歌詞を目視するために最低限確保するワイプ前時間。
+
+    ニコカラメーカーの自動保護時間は、ワイプ前・ワイプ後の短い方の
+    半分になるため、ワイプ後が短い設定ではワイプ前表示が約200 msまで
+    縮むことがある。表示自体は成立しても次行の認識が間に合わないため、
+    自動割付ではワイプ前だけ最低350 msを読み取り余裕として確保する。
+
+    手動保護時間が350 msを超える場合は、そちらを優先する。
+    """
+    requested_pre = max(0, int(settings["pre_wipe_ms"]))
+    protection = max(0, int(settings["effective_protection_ms"]))
+    return min(requested_pre, max(protection, 350))
+
+
+def _protection_is_preserved(timing: TimingResult, settings) -> bool:
+    """保護時間と、次行を読むためのワイプ前余裕を維持できるか判定する。
+
+    間隔・ワイプ後・ワイプ前の軽微な削減は許容するが、以下は不可。
+
+    * 保護時間そのものを削る
+    * 強制終了が発生する
+    * ワイプ前表示が読み取り余裕を下回る
+    """
+    return (
+        timing.forced_cut_ms == 0
+        and timing.severity <= 3
+        and timing.pre_ms >= _minimum_readable_pre_ms(settings)
+    )
 
 
 def _align_transition_start(
@@ -190,7 +216,7 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
             (
                 item
                 for item in candidate.replacements
-                if not _protection_is_preserved(item.timing)
+                if not _protection_is_preserved(item.timing, settings)
             ),
             None,
         )
