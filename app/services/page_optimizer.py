@@ -115,23 +115,70 @@ def _protection_is_preserved(timing: TimingResult) -> bool:
     return timing.forced_cut_ms == 0 and timing.severity <= 3
 
 
-def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
-    """段落を先頭から処理し、必要になった位置以降だけ行数を増やす。
+def _align_transition_start(
+    paragraph_start: int,
+    paragraph_end: int,
+    proposed_start: int,
+    current_lines: int,
+    next_lines: int,
+) -> int:
+    """行数切替の前後に端数ページが残らない位置まで遡る。
 
-    基準行数の表示枠を循環利用し、同じ枠の前行と次行を比較する。
-    保護時間を維持できない最初の置換が見つかった場合、その置換を
-    含むページの先頭から表示枠を1つ増やして再計算する。
+    例: 6行の段落を2行表示から3行表示へ切り替える場合、
+    途中から切り替えると ``2 + 2 + 2`` のままになってしまう。
+    段落先頭まで遡れば ``3 + 3`` にできるため、その位置を採用する。
+
+    ただし、前後をどちらも割り切れる位置が存在しない場合は、
+    元の切替位置を維持する。段落末の1行ページは別処理で許可する。
+    """
+    total_size = paragraph_end - paragraph_start + 1
+    proposed_offset = proposed_start - paragraph_start
+
+    for offset in range(proposed_offset, -1, -1):
+        previous_size = offset
+        following_size = total_size - offset
+        if (
+            previous_size % current_lines == 0
+            and following_size % next_lines == 0
+        ):
+            return paragraph_start + offset
+
+    return proposed_start
+
+
+def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
+    """必要なページだけ表示行数を増やし、その後は基準行数へ戻す。
+
+    基準行数で保護時間を維持できない置換が見つかった場合、問題を含む
+    ページだけを1行増やす。増加後の1ページを置いた残りが基準行数で
+    きれいに割り付けられる場合は、次のページから基準行数へ戻す。
+
+    残りに端数が出る場合は、増加後の行数で割り切れる位置まで開始位置を
+    遡る。これにより、局所的な ``2→3→2`` と、段落全体の ``3→3`` を
+    同じ規則で扱える。
     """
     paragraph_size = end - start + 1
-    current_start = start
-    current_lines = min(base_lines, max(2, paragraph_size))
+    base_lines = min(base_lines, max(2, paragraph_size))
     upper = min(max_lines, max(2, paragraph_size))
     segments = []
+    cursor = start
 
-    while current_start <= end:
+    while cursor <= end:
+        remaining = end - cursor + 1
+        current_lines = min(base_lines, max(1, remaining))
+
+        # 段落末の1行は、そのまま独立ページとして許可する。
+        if remaining == 1:
+            segments.append(
+                _evaluate_segment(
+                    times, cursor, end, 1, settings, base_lines, start, end
+                )
+            )
+            break
+
         candidate = _evaluate_segment(
             times,
-            current_start,
+            cursor,
             end,
             current_lines,
             settings,
@@ -139,7 +186,6 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
             start,
             end,
         )
-
         unacceptable = next(
             (
                 item
@@ -149,35 +195,94 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
             None,
         )
 
-        # 問題なし、または最大行数まで増やした後はこの構成を採用する。
-        if unacceptable is None or current_lines >= upper:
+        if unacceptable is None:
             segments.append(candidate)
             break
 
-        # 問題のある次行を含む、現在のページ先頭から行数を増やす。
-        page_offset = (unacceptable.next_index - current_start) // current_lines
-        next_segment_start = current_start + page_offset * current_lines
+        page_offset = (unacceptable.next_index - cursor) // current_lines
+        problem_page_start = cursor + page_offset * current_lines
+        next_lines = current_lines + 1
 
-        # 通常は起こらないが、無限ループ防止として同位置ならその場で増やす。
-        if next_segment_start <= current_start:
-            current_lines += 1
+        if next_lines > upper:
+            segments.append(candidate)
+            break
+
+        # 問題ページより前は基準行数のまま確定する。
+        if problem_page_start > cursor:
+            segments.append(
+                _evaluate_segment(
+                    times,
+                    cursor,
+                    problem_page_start - 1,
+                    current_lines,
+                    settings,
+                    base_lines,
+                    start,
+                    end,
+                )
+            )
+
+        # 増加後の1ページだけ置き、その後を基準行数へ戻せるか確認する。
+        local_end = problem_page_start + next_lines - 1
+        remaining_after_local = end - local_end
+
+        if local_end <= end and remaining_after_local % base_lines == 0:
+            segments.append(
+                _evaluate_segment(
+                    times,
+                    problem_page_start,
+                    local_end,
+                    next_lines,
+                    settings,
+                    base_lines,
+                    start,
+                    end,
+                )
+            )
+            cursor = local_end + 1
             continue
 
-        previous_segment_end = next_segment_start - 1
+        # 局所変更では末尾に端数が残るため、増加後の行数で割り切れる
+        # 位置まで開始地点を遡り、そこから段落末まで同じ行数を使う。
+        aligned_start = _align_transition_start(
+            cursor,
+            end,
+            problem_page_start,
+            current_lines,
+            next_lines,
+        )
+
+        # 既に確定した区間と重なる場合は、その確定を取り消して再構成する。
+        while segments and segments[-1].start >= aligned_start:
+            segments.pop()
+
+        if aligned_start > cursor:
+            segments.append(
+                _evaluate_segment(
+                    times,
+                    cursor,
+                    aligned_start - 1,
+                    current_lines,
+                    settings,
+                    base_lines,
+                    start,
+                    end,
+                )
+            )
+
         segments.append(
             _evaluate_segment(
                 times,
-                current_start,
-                previous_segment_end,
-                current_lines,
+                aligned_start,
+                end,
+                next_lines,
                 settings,
                 base_lines,
                 start,
                 end,
             )
         )
-        current_start = next_segment_start
-        current_lines += 1
+        break
 
     return segments
 
