@@ -1655,71 +1655,74 @@ class LyricsFormatter:
             )
         )
 
-    def sort_lines_by_first_tag(self,lines):
+    def sort_lines_by_first_tag(
+        self,
+        lines
+    ):
 
-            sortable = []
+        sortable = []
+        no_tag = []
 
-            no_tag = []
+        for index, line in enumerate(lines):
 
-            for index, line in enumerate(lines):
+            #
+            # 最初と最後のタイムタグを取得
+            # タグが無い場合は (None, None)
+            #
 
-                #
-                # タイムタグ取得
-                #
+            first_time, _ = self.extract_times(
+                line
+            )
 
-                times = self.extract_times(
-                    line
-                )
+            #
+            # タイムタグ無しは並べ替え対象から外し、最後へ送る
+            #
 
-                #
-                # タイムタグ無し
-                #
+            if first_time is None:
 
-                if not times:
-
-                    no_tag.append(line)
-
-                    continue
-
-                #
-                # 最初のタイムタグ
-                #
-
-                sortable.append(
-
+                no_tag.append(
                     (
-                        times[0],
                         index,
                         line
                     )
-
                 )
 
-            #
-            # 時間順
-            #
+                continue
 
-            sortable.sort()
-
-            result = [
-
-                line
-
-                for _, _, line
-
-                in sortable
-
-            ]
-
-            #
-            # タイムタグ無しは最後
-            #
-
-            result.extend(
-                no_tag
+            sortable.append(
+                (
+                    first_time,
+                    index,
+                    line
+                )
             )
 
-            return result
+        #
+        # 時刻順。同時刻の場合は元の順番を維持
+        #
+
+        sortable.sort(
+            key=lambda item: (
+                item[0],
+                item[1]
+            )
+        )
+
+        result = [
+            line
+            for _, _, line in sortable
+        ]
+
+        #
+        # タイムタグ無しは元の順番のまま最後へ
+        #
+
+        result.extend(
+            line
+            for _, line in no_tag
+        )
+
+        return result
 
     def get_nicokara_timing_settings(self):
 
@@ -1775,11 +1778,6 @@ class LyricsFormatter:
             if paragraph_index < len(plan.paragraphs) - 1:
                 if result and result[-1] != "":
                     result.append("")
-
-        # 比較時に不可視差分が出ないよう、末尾の空行は出力しない。
-        # 各歌詞行はauto_allocate側でrstrip済み。
-        while result and result[-1] == "":
-            result.pop()
 
         return result
 
