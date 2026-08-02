@@ -167,7 +167,10 @@ class AutoAllocationDialog:
             lambda _e: self.body_canvas.configure(scrollregion=self.body_canvas.bbox("all")),
         )
         self.body_canvas.bind("<Configure>", lambda _e: self.body_canvas.itemconfigure(body_id, width=total_width))
-        self.body_canvas.bind_all("<MouseWheel>", self._mousewheel, add="+")
+        # このToplevel内だけでホイールを処理する。
+        # bind_allを使うと、メイン画面の入力欄・出力欄をスクロールした際にも
+        # 自動割付画面が連動してしまうため、Toplevelのbindタグへ限定する。
+        self.window.bind("<MouseWheel>", self._mousewheel, add="+")
 
         for col, (_text, width, _anchor) in enumerate(self.COLUMNS):
             self.body_frame.grid_columnconfigure(col, minsize=width)
@@ -177,8 +180,19 @@ class AutoAllocationDialog:
         self.header_canvas.xview(*args)
 
     def _mousewheel(self, event):
-        if self.window and self.window.winfo_exists() and self.window.focus_displayof() is not None:
+        if not self.window or not self.window.winfo_exists():
+            return
+
+        # 自動割付ウインドウ内で発生したイベントだけを処理する。
+        widget = event.widget
+        try:
+            inside_dialog = str(widget).startswith(str(self.window))
+        except Exception:
+            inside_dialog = False
+
+        if inside_dialog and self.body_canvas:
             self.body_canvas.yview_scroll(int(-event.delta / 120), "units")
+            return "break"
 
     def _validated_values(self):
         try:

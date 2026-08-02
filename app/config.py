@@ -8,7 +8,7 @@ TIME_CAPTURE = re.compile(r"\[(?:\d+\|)?(\d{2}):(\d{2}):(\d{2})\]")
 GITHUB_API = "https://api.github.com/repos/OshinoItsuki/lyrics_formatter/releases/latest"
 SETTINGS_FILE = "settings.json"
 APP_NAME = "歌詞改行ツール"
-APP_VERSION = "2.0"
+APP_VERSION = "2.0.2"
 
 DEFAULT_THRESHOLD = "00:03:10"
 DEFAULT_LINE_COUNT = "2"
