@@ -279,7 +279,12 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
         )
 
         # 既に確定した区間と重なる場合は、その確定を取り消して再構成する。
-        while segments and segments[-1].start >= aligned_start:
+        #
+        # start だけで判定すると、例えば既存区間 28～29 に対して
+        # aligned_start=29 の場合、28 >= 29 が False となり 29 行目が
+        # 二重所属する。区間の「末尾」が新しい開始位置へ到達しているかで
+        # 判定し、部分的な重なりも必ず取り消す。
+        while segments and segments[-1].end >= aligned_start:
             segments.pop()
 
         if aligned_start > cursor:
@@ -312,6 +317,24 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
 
     return segments
 
+
+
+def _segments_cover_exactly_once(segments, start, end):
+    """区間群が元の歌詞行を欠落・重複なく1回ずつ覆うか確認する。
+
+    自動割付は改行位置だけを変更する機能なので、元行の増殖や消失は
+    絶対に許可しない。最適化ロジック変更時の安全弁として使う。
+    """
+    if not segments:
+        return False
+
+    expected = start
+    for segment in segments:
+        if segment.start != expected or segment.end < segment.start:
+            return False
+        expected = segment.end + 1
+
+    return expected == end + 1
 
 
 def _separate_terminal_single_line(segments, paragraph_end):
@@ -391,9 +414,28 @@ def build_plan(times, paragraph_ranges, settings, base_lines=2, max_lines=4, opt
             )
             # 段落末に1行だけ残る場合も、そのまま1行ページとして採用する。
             # 前ページから行を移す再配分は行わない。
-            segments.extend(
-                _separate_terminal_single_line(paragraph_segments, end)
+            paragraph_segments = _separate_terminal_single_line(
+                paragraph_segments, end
             )
+
+            # 自動割付は元歌詞の行を増減させてはいけない。
+            # 万一、最適化結果に重複・欠落が生じた場合は壊れた plan を
+            # 出力せず、その段落だけ基準行数へ安全にフォールバックする。
+            if not _segments_cover_exactly_once(paragraph_segments, start, end):
+                paragraph_segments = [
+                    _evaluate_segment(
+                        times,
+                        start,
+                        end,
+                        effective_base,
+                        settings,
+                        base_lines,
+                        start,
+                        end,
+                    )
+                ]
+
+            segments.extend(paragraph_segments)
         else:
             segments.append(
                 _evaluate_segment(
