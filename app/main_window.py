@@ -1926,14 +1926,15 @@ class LyricsFormatter:
         def calculate(selected_base_lines, selected_maximum):
             selected_base_lines = max(2, int(selected_base_lines))
             selected_maximum = max(selected_base_lines, int(selected_maximum))
+            current_settings = self.get_nicokara_timing_settings()
             return optimize_pages(
                 times,
-                settings,
+                current_settings,
                 min_lines=2,
                 max_lines=selected_maximum,
                 paragraph_ranges=paragraph_ranges,
                 base_lines=selected_base_lines,
-            ), settings
+            ), current_settings
 
         def apply_plan(plan, selected_base_lines, selected_maximum):
             result = self.build_allocation_result(lines, plan)
