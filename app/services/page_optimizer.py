@@ -279,7 +279,7 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
     # 行数拡張は二乗ペナルティ。4行の多用より局所的な3行を優先。
     states = {
         (start, size): (
-            (0, max(0, size - minimum) ** 2 * 2, 0, 0, 1),
+            (0, max(0, size - minimum) ** 2 * 3, 0, 0, 1),
             [(start, size)],
         )
         for size in range(minimum, upper + 1)
@@ -310,7 +310,7 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
                 )
                 next_score = (
                     score[0] + conflicts,
-                    score[1] + soft_cost + max(0, size - minimum) ** 2 * 2,
+                    score[1] + soft_cost + max(0, size - minimum) ** 2 * 3,
                     score[2] + shortage,
                     score[3] + int(size != previous_size),
                     score[4] + 1,
