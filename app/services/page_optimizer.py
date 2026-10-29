@@ -178,12 +178,19 @@ def _align_transition_start(
 def _boundary_replacements(times, previous_start, previous_size, next_start, next_size, settings):
     """行数変更を含むページ境界でも、同じ表示位置の行を比較する。"""
     count = min(previous_size, next_size)
+    # 行数を減らす際、前ページの先頭行ではなく末尾の表示枠を再利用する。
+    # 例: 4行(82～85) → 2行(86～87) では 84→86, 85→87 を比較する。
+    # 82→86, 83→87 の比較では 84行の表示終了が見落とされる。
+    previous_offset = previous_size - count
     return [
         ReplacementEvaluation(
-            previous_index=previous_start + offset,
+            previous_index=previous_start + previous_offset + offset,
             next_index=next_start + offset,
             timing=_simulate_between(
-                times, previous_start + offset, next_start + offset, settings
+                times,
+                previous_start + previous_offset + offset,
+                next_start + offset,
+                settings,
             ),
         )
         for offset in range(count)
