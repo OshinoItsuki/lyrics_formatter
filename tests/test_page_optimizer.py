@@ -43,20 +43,37 @@ class AllocationRegressionTests(unittest.TestCase):
         self.assertTrue(any(seg.line_count > 2 for seg in plan.paragraphs))
         self.assertEqual(plan.paragraphs[-1].line_count, 2)
 
-    def test_shrinking_four_lines_uses_trailing_display_slots(self):
-        # 82～85行の後に86～87行を2行で表示するなら
-        # 84→86、85→87の置換時間を確認しなければならない。
-        times = [(0, 100), (100, 200), (200, 400),
-                 (300, 430), (350, 500), (450, 600)]
+    def test_resizing_compares_full_previous_and_next_pages(self):
+        # 3→4行なら、前ページ最後の歌詞と次ページ最初の歌詞が
+        # 重なっていないかを検査する。
+        times = [
+            (0, 100), (100, 200), (200, 700),
+            (600, 800), (900, 1000), (1100, 1200), (1300, 1400),
+        ]
+        replacements = _boundary_replacements(
+            times, 0, 3, 3, 4, SETTINGS
+        )
+        self.assertEqual(len(replacements), 1)
+        self.assertEqual(
+            (replacements[0].previous_index, replacements[0].next_index),
+            (2, 3),
+        )
+        self.assertEqual(replacements[0].overlap_ms, 1000)
+
+    def test_shrinking_compares_full_previous_and_next_pages(self):
+        times = [
+            (0, 100), (100, 200), (200, 400),
+            (300, 430), (350, 500), (450, 600),
+        ]
         replacements = _boundary_replacements(
             times, 0, 4, 4, 2, SETTINGS
         )
+        self.assertEqual(len(replacements), 1)
         self.assertEqual(
-            [(item.previous_index, item.next_index) for item in replacements],
-            [(2, 4), (3, 5)],
+            (replacements[0].previous_index, replacements[0].next_index),
+            (3, 4),
         )
-        self.assertEqual(replacements[0].timing.available_ms, 0)
-        self.assertEqual(replacements[0].overlap_ms, 500)
+        self.assertEqual(replacements[0].overlap_ms, 800)
 
     def test_actual_six_line_case_prefers_three_plus_three(self):
         # 実例の82～87行付近のタイムタグ（単位: 1/100秒）。
@@ -82,6 +99,34 @@ class AllocationRegressionTests(unittest.TestCase):
             for segment in plan.paragraphs
             for replacement in segment.replacements
         ))
+
+    def test_full_sample_keeps_two_lines_until_local_change(self):
+        # 利用者の歌詞の56～87行からタイムタグだけ抽出した回帰ケース。
+        # 前半を不必要に4行化せず、82～87行は3行＋3行にする。
+        times = [
+            (29320, 29841), (29874, 30396), (30428, 30668), (30711, 30937),
+            (30988, 31221), (31267, 31509), (31531, 32001), (32034, 32675),
+            (32649, 33115), (33132, 33408), (33419, 33630), (33588, 33992),
+            (34007, 34314), (34323, 34690), (34669, 35171), (35124, 35423),
+            (35438, 35805), (35786, 36262), (36084, 36843), (36608, 36912),
+            (36990, 37280), (37290, 37597), (37566, 38135), (38127, 38396),
+            (38406, 38726), (38678, 38983), (38995, 39706), (39434, 39630),
+            (39643, 40250), (39989, 40189), (40200, 40436), (40445, 41127),
+        ]
+        plan = optimize_pages(
+            times, SETTINGS, max_lines=4,
+            paragraph_ranges=[(0, len(times) - 1)], base_lines=2,
+        )
+        page_starts = []
+        for segment in plan.paragraphs:
+            page_starts.extend(
+                (index + 56, segment.line_count)
+                for index in range(segment.start, segment.end + 1, segment.line_count)
+            )
+        self.assertIn((82, 3), page_starts)
+        self.assertIn((85, 3), page_starts)
+        self.assertTrue(all(size == 2 for first, size in page_starts if first < 76))
+        self.assertNotIn((84, 4), page_starts)
 
     def test_last_line_is_not_lost(self):
         self._plan([400 * i for i in range(15)])
