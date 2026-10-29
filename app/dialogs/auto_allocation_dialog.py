@@ -276,14 +276,19 @@ class AutoAllocationDialog:
                 outgoing = replacement_by_previous.get(index)
                 paragraph_exit = paragraph_boundary_by_previous.get(index)
 
-                if offset < paragraph.line_count:
+                if incoming is not None:
+                    # 行数を切り替えた直後も前ページとの置換時間を使用する。
+                    actual_pre = incoming.timing.pre_ms
+                    display_start_ms = None if first_cs is None else first_cs * 10 - actual_pre
+                    pre_reduced = actual_pre < self.settings["pre_wipe_ms"]
+                elif offset < paragraph.line_count:
                     display_start_ms = common_start_ms
                     actual_pre = entry_pre
                     pre_reduced = paragraph_entry is not None and actual_pre < self.settings["pre_wipe_ms"]
                 else:
-                    actual_pre = incoming.timing.pre_ms
+                    actual_pre = self.settings["pre_wipe_ms"]
                     display_start_ms = None if first_cs is None else first_cs * 10 - actual_pre
-                    pre_reduced = actual_pre < self.settings["pre_wipe_ms"]
+                    pre_reduced = False
 
                 if outgoing:
                     actual_post = outgoing.timing.post_ms
