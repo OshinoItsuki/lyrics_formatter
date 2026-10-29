@@ -177,63 +177,86 @@ def _align_transition_start(
 
 
 def _boundary_replacements(times, previous_start, previous_size, next_start, next_size, settings):
-    """行数変更を含むページ境界でも、同じ表示位置の行を比較する。"""
-    count = min(previous_size, next_size)
-    # 行数を減らす際、前ページの先頭行ではなく末尾の表示枠を再利用する。
-    # 例: 4行(82～85) → 2行(86～87) では 84→86, 85→87 を比較する。
-    # 82→86, 83→87 の比較では 84行の表示終了が見落とされる。
-    previous_offset = previous_size - count
-    return [
-        ReplacementEvaluation(
-            previous_index=previous_start + previous_offset + offset,
-            next_index=next_start + offset,
-            timing=_simulate_between(
-                times,
-                previous_start + previous_offset + offset,
-                next_start + offset,
-                settings,
+    """ページ境界で同じ表示位置に重なる歌詞を検査する。
+
+    同じ行数なら画面上の位置が維持され、各位置で1行ずつ入れ替わる。
+    行数が変わる場合は表示枠を再構成するため、前ページで最後に
+    終わる歌詞と次ページで最初に始まる歌詞を比較する。
+    一部の行だけを対応させると、3→4行などで評価されない表示枠に
+    重なりが残る。
+    """
+    if previous_size == next_size:
+        pairs = [
+            (previous_start + offset, next_start + offset)
+            for offset in range(previous_size)
+        ]
+    else:
+        previous_index = max(
+            range(previous_start, previous_start + previous_size),
+            key=lambda index: (
+                float("inf") if times[index][1] is None else times[index][1]
             ),
-            overlap_ms=max(
-                0,
-                (times[previous_start + previous_offset + offset][1]
-                 - times[next_start + offset][0]) * 10,
-            ) if (
-                times[previous_start + previous_offset + offset][1] is not None
-                and times[next_start + offset][0] is not None
-            ) else 0,
         )
-        for offset in range(count)
-    ]
+        next_index = min(
+            range(next_start, next_start + next_size),
+            key=lambda index: (
+                float("-inf") if times[index][0] is None else times[index][0]
+            ),
+        )
+        pairs = [(previous_index, next_index)]
+
+    replacements = []
+    for previous_index, next_index in pairs:
+        previous_end = times[previous_index][1]
+        next_begin = times[next_index][0]
+        overlap_ms = (
+            max(0, (previous_end - next_begin) * 10)
+            if previous_end is not None and next_begin is not None
+            else 0
+        )
+        replacements.append(
+            ReplacementEvaluation(
+                previous_index=previous_index,
+                next_index=next_index,
+                timing=_simulate_between(times, previous_index, next_index, settings),
+                overlap_ms=overlap_ms,
+            )
+        )
+    return replacements
 
 
 def _boundary_cost(replacements, settings):
-    """条件違反を最優先し、続いて不足量を最小化する。"""
-    forced_cuts = 0
-    violations = 0
+    """重なりを最優先で防ぎ、次に表示行数と時間短縮を比較する。"""
+    hard_conflicts = 0
+    soft_cost = 0
     shortage = 0
     for replacement in replacements:
         timing = replacement.timing
         if timing.forced_cut_ms > 0 or replacement.overlap_ms > 0:
-            forced_cuts += 1
-        if not _protection_is_preserved(timing, settings):
-            violations += 1
+            hard_conflicts += 1
+
+        # 0ms表示切替と表示保護の不足も減らす。ただし軽微な短縮の
+        # 解消だけのために段落全体を3・4行へ拡張することは避ける。
+        if settings["interval_ms"] > 0 and timing.interval_ms == 0:
+            soft_cost += 2
+        if timing.pre_ms < _minimum_readable_pre_ms(settings):
+            soft_cost += 4
+        if timing.pre_ms < timing.protection_ms or timing.post_ms < timing.protection_ms:
+            soft_cost += 4
+
         shortage += (
             max(0, int(settings["interval_ms"]) - timing.interval_ms)
             + max(0, _minimum_readable_pre_ms(settings) - timing.pre_ms)
-            + max(0, timing.protection_ms - timing.post_ms)
-            + max(0, timing.protection_ms - timing.pre_ms)
             + timing.forced_cut_ms
         )
-    return forced_cuts, violations, shortage
+    return hard_conflicts, soft_cost, shortage
 
 
 def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
-    """段落全体から局所的なページ割付を選ぶ。
+    """段落全体で局所的な行数と表示時間を比較する。
 
-    従来の「切替点から段落末まで3行固定」を廃止する。
-    すべてのページ境界を（異なる行数間も含めて）評価し、
-    まず表示間隔・保護時間の違反、次に拡張した行数を最小化する。
-    段落最終行だけは独立1行ページを許容する。
+    表示枠の重なりを第一に防ぎ、行数変更の必要がない部分は
+    基準行数を保つ。行数変更時はページ全体の表示時間を比較する。
     """
     count = end - start + 1
     upper = min(max_lines, count)
@@ -243,15 +266,15 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
             times, start, end, 1, settings, base_lines, start, end
         )]
 
-    # key=(直前ページ開始位置, 行数), value=(評価値, ページ一覧)
-    # 評価値は辞書式比較: 強制終了 -> 条件違反 -> 不足量 -> 拡張量 -> 切替回数。
-    states = {(start, size): (
-        (0, 0, 0, max(0, size - minimum), 0, 1),
-        [(start, size)],
-    ) for size in range(minimum, upper + 1)}
-    if not states:
-        states = {(start, count): ((0, 0, 0, 0, 0, 1), [(start, count)])}
-
+    # score=(重なり・強制終了, 行数・時間の負担, 短縮量, 切替数, ページ数)
+    # 行数拡張の負担は増加分×2。軽微な間隔短縮より基準行数を優先。
+    states = {
+        (start, size): (
+            (0, max(0, size - minimum) * 2, 0, 0, 1),
+            [(start, size)],
+        )
+        for size in range(minimum, upper + 1)
+    }
     completed = []
     for _ in range(count):
         next_states = {}
@@ -264,23 +287,24 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
                 continue
 
             remaining = end - next_start + 1
-            sizes = list(range(minimum, min(upper, remaining) + 1))
-            # 最終ページが1行だけ余るケースのみ、1行を認める。
-            if remaining == 1:
-                sizes = [1]
+            sizes = (
+                [1] if remaining == 1
+                else range(minimum, min(upper, remaining) + 1)
+            )
             for size in sizes:
                 replacements = _boundary_replacements(
                     times, previous_start, previous_size,
                     next_start, size, settings
                 )
-                forced_cuts, violations, shortage = _boundary_cost(replacements, settings)
+                conflicts, soft_cost, shortage = _boundary_cost(
+                    replacements, settings
+                )
                 next_score = (
-                    score[0] + forced_cuts,
-                    score[1] + violations,
+                    score[0] + conflicts,
+                    score[1] + soft_cost + max(0, size - minimum) * 2,
                     score[2] + shortage,
-                    score[3] + max(0, size - minimum),
-                    score[4] + int(size != previous_size),
-                    score[5] + 1,
+                    score[3] + int(size != previous_size),
+                    score[4] + 1,
                 )
                 key = (next_start, size)
                 old = next_states.get(key)
@@ -294,9 +318,9 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
         return [_evaluate_segment(
             times, start, end, minimum, settings, base_lines, start, end
         )]
+
     _, pages = min(completed, key=lambda item: item[0])
 
-    # ページ単位の結果を、既存UIが使う同一行数の連続区間へ変換。
     segments = []
     for page_index, (page_start, size) in enumerate(pages):
         page_end = page_start + size - 1
@@ -304,7 +328,8 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
             previous = segments[-1]
             previous.end = page_end
             previous.replacements.extend(_boundary_replacements(
-                times, page_start - size, size, page_start, size, settings
+                times, pages[page_index - 1][0],
+                size, page_start, size, settings
             ))
         else:
             segment = ParagraphEvaluation(
