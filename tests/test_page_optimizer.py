@@ -1,7 +1,7 @@
 """自動割付の回帰テスト。python -m unittest discover -s tests"""
 import unittest
 
-from app.services.page_optimizer import optimize_pages
+from app.services.page_optimizer import optimize_pages, _boundary_replacements
 
 
 SETTINGS = {
@@ -42,6 +42,40 @@ class AllocationRegressionTests(unittest.TestCase):
         plan = self._plan(starts)
         self.assertTrue(any(seg.line_count > 2 for seg in plan.paragraphs))
         self.assertEqual(plan.paragraphs[-1].line_count, 2)
+
+    def test_shrinking_four_lines_uses_trailing_display_slots(self):
+        # 82～85行の後に86～87行を2行で表示するなら
+        # 84→86、85→87の置換時間を確認しなければならない。
+        times = [(0, 100), (100, 200), (200, 400),
+                 (300, 430), (350, 500), (450, 600)]
+        replacements = _boundary_replacements(
+            times, 0, 4, 4, 2, SETTINGS
+        )
+        self.assertEqual(
+            [(item.previous_index, item.next_index) for item in replacements],
+            [(2, 4), (3, 5)],
+        )
+        self.assertEqual(replacements[0].timing.available_ms, 0)
+
+    def test_actual_six_line_case_prefers_three_plus_three(self):
+        # 実例の82～87行付近のタイムタグ（単位: 1/100秒）。
+        times = [
+            (38995, 39706),  # 82
+            (39334, 39630),  # 83
+            (39643, 40250),  # 84
+            (39989, 40189),  # 85
+            (40200, 40436),  # 86
+            (40445, 41127),  # 87
+        ]
+        plan = optimize_pages(
+            times, SETTINGS, max_lines=4,
+            paragraph_ranges=[(0, 5)], base_lines=2,
+        )
+        self.assertEqual(
+            [(segment.start, segment.end, segment.line_count)
+             for segment in plan.paragraphs],
+            [(0, 5, 3)],
+        )
 
     def test_last_line_is_not_lost(self):
         self._plan([400 * i for i in range(15)])
