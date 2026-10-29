@@ -128,15 +128,18 @@ def _minimum_readable_pre_ms(settings) -> int:
 def _protection_is_preserved(timing: TimingResult, settings) -> bool:
     """保護時間と、次行を読むためのワイプ前余裕を維持できるか判定する。
 
-    間隔・ワイプ後・ワイプ前の軽微な削減は許容するが、以下は不可。
+    表示間隔の短縮は、行数を増やせる間は許容しない。
+    ワイプ後・ワイプ前の軽微な削減は許容するが、以下は不可。
 
     * 保護時間そのものを削る
     * 強制終了が発生する
+    * 設定した表示間隔が短縮される（0ms切り替えも含む）
     * ワイプ前表示が読み取り余裕を下回る
     """
     return (
         timing.forced_cut_ms == 0
         and timing.severity <= 3
+        and timing.interval_ms >= max(0, int(settings["interval_ms"]))
         and timing.pre_ms >= _minimum_readable_pre_ms(settings)
     )
 
