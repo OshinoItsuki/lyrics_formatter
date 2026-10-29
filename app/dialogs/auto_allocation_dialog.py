@@ -313,7 +313,12 @@ class AutoAllocationDialog:
                 source_timing = incoming.timing if incoming else None
                 if incoming and incoming.overlap_ms > 0:
                     notes.append(f"歌唱時間重複 {incoming.overlap_ms} ms")
-                if source_timing and source_timing.interval_ms < self.settings["interval_ms"]:
+                # 楽曲末尾は次の歌詞への切り替えがないため、表示間隔警告を出さない。
+                if (
+                    index < len(self.lines) - 1
+                    and source_timing
+                    and source_timing.interval_ms < self.settings["interval_ms"]
+                ):
                     notes.append(f"間隔 {self.settings['interval_ms']}→{source_timing.interval_ms} ms")
                 if post_reduced:
                     notes.append(f"ワイプ後 {self.settings['post_wipe_ms']}→{actual_post} ms")
