@@ -175,151 +175,136 @@ def _align_transition_start(
     return proposed_start
 
 
-def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
-    """必要なページだけ表示行数を増やし、その後は基準行数へ戻す。
-
-    基準行数で保護時間を維持できない置換が見つかった場合、問題を含む
-    ページだけを1行増やす。増加後の1ページを置いた残りが基準行数で
-    きれいに割り付けられる場合は、次のページから基準行数へ戻す。
-
-    残りに端数が出る場合は、増加後の行数で割り切れる位置まで開始位置を
-    遡る。これにより、局所的な ``2→3→2`` と、段落全体の ``3→3`` を
-    同じ規則で扱える。
-    """
-    paragraph_size = end - start + 1
-    base_lines = min(base_lines, max(2, paragraph_size))
-    upper = min(max_lines, max(2, paragraph_size))
-    segments = []
-    cursor = start
-
-    while cursor <= end:
-        remaining = end - cursor + 1
-        current_lines = min(base_lines, max(1, remaining))
-
-        # 段落末の1行は、そのまま独立ページとして許可する。
-        if remaining == 1:
-            segments.append(
-                _evaluate_segment(
-                    times, cursor, end, 1, settings, base_lines, start, end
-                )
-            )
-            break
-
-        candidate = _evaluate_segment(
-            times,
-            cursor,
-            end,
-            current_lines,
-            settings,
-            base_lines,
-            start,
-            end,
-        )
-        unacceptable = next(
-            (
-                item
-                for item in candidate.replacements
-                if not _protection_is_preserved(item.timing, settings)
+def _boundary_replacements(times, previous_start, previous_size, next_start, next_size, settings):
+    """行数変更を含むページ境界でも、同じ表示位置の行を比較する。"""
+    count = min(previous_size, next_size)
+    return [
+        ReplacementEvaluation(
+            previous_index=previous_start + offset,
+            next_index=next_start + offset,
+            timing=_simulate_between(
+                times, previous_start + offset, next_start + offset, settings
             ),
-            None,
         )
+        for offset in range(count)
+    ]
 
-        if unacceptable is None:
-            segments.append(candidate)
+
+def _boundary_cost(replacements, settings):
+    """条件違反を最優先し、続いて不足量を最小化する。"""
+    violations = 0
+    shortage = 0
+    for replacement in replacements:
+        timing = replacement.timing
+        if not _protection_is_preserved(timing, settings):
+            violations += 1
+        shortage += (
+            max(0, int(settings["interval_ms"]) - timing.interval_ms)
+            + max(0, _minimum_readable_pre_ms(settings) - timing.pre_ms)
+            + max(0, timing.protection_ms - timing.post_ms)
+            + max(0, timing.protection_ms - timing.pre_ms)
+            + timing.forced_cut_ms
+        )
+    return violations, shortage
+
+
+def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
+    """段落全体から局所的なページ割付を選ぶ。
+
+    従来の「切替点から段落末まで3行固定」を廃止する。
+    すべてのページ境界を（異なる行数間も含めて）評価し、
+    まず表示間隔・保護時間の違反、次に拡張した行数を最小化する。
+    段落最終行だけは独立1行ページを許容する。
+    """
+    count = end - start + 1
+    upper = min(max_lines, count)
+    minimum = min(base_lines, count)
+    if count <= 1:
+        return [_evaluate_segment(
+            times, start, end, 1, settings, base_lines, start, end
+        )]
+
+    # key=(直前ページ開始位置, 行数), value=(評価値, ページ一覧)
+    # 評価値は辞書式比較: 条件違反 -> 不足量 -> 拡張量 -> 切替回数。
+    states = {(start, size): (
+        (0, 0, max(0, size - minimum), 0, 1),
+        [(start, size)],
+    ) for size in range(minimum, upper + 1)}
+    if not states:
+        states = {(start, count): ((0, 0, 0, 0, 1), [(start, count)])}
+
+    completed = []
+    for _ in range(count):
+        next_states = {}
+        for (previous_start, previous_size), (score, pages) in states.items():
+            next_start = previous_start + previous_size
+            if next_start == end + 1:
+                completed.append((score, pages))
+                continue
+            if next_start > end:
+                continue
+
+            remaining = end - next_start + 1
+            sizes = list(range(minimum, min(upper, remaining) + 1))
+            # 最終ページが1行だけ余るケースのみ、1行を認める。
+            if remaining == 1:
+                sizes = [1]
+            for size in sizes:
+                replacements = _boundary_replacements(
+                    times, previous_start, previous_size,
+                    next_start, size, settings
+                )
+                violations, shortage = _boundary_cost(replacements, settings)
+                next_score = (
+                    score[0] + violations,
+                    score[1] + shortage,
+                    score[2] + max(0, size - minimum),
+                    score[3] + int(size != previous_size),
+                    score[4] + 1,
+                )
+                key = (next_start, size)
+                old = next_states.get(key)
+                if old is None or next_score < old[0]:
+                    next_states[key] = (next_score, pages + [(next_start, size)])
+        if not next_states:
             break
+        states = next_states
 
-        page_offset = (unacceptable.next_index - cursor) // current_lines
-        problem_page_start = cursor + page_offset * current_lines
-        next_lines = current_lines + 1
+    if not completed:
+        return [_evaluate_segment(
+            times, start, end, minimum, settings, base_lines, start, end
+        )]
+    _, pages = min(completed, key=lambda item: item[0])
 
-        if next_lines > upper:
-            segments.append(candidate)
-            break
-
-        # 問題ページより前は基準行数のまま確定する。
-        if problem_page_start > cursor:
-            segments.append(
-                _evaluate_segment(
-                    times,
-                    cursor,
-                    problem_page_start - 1,
-                    current_lines,
-                    settings,
-                    base_lines,
-                    start,
-                    end,
-                )
+    # ページ単位の結果を、既存UIが使う同一行数の連続区間へ変換。
+    segments = []
+    for page_index, (page_start, size) in enumerate(pages):
+        page_end = page_start + size - 1
+        if segments and segments[-1].line_count == size:
+            previous = segments[-1]
+            previous.end = page_end
+            previous.replacements.extend(_boundary_replacements(
+                times, page_start - size, size, page_start, size, settings
+            ))
+        else:
+            segment = ParagraphEvaluation(
+                start=page_start,
+                end=page_end,
+                line_count=size,
+                replacements=[],
+                changed=size != base_lines,
+                paragraph_start=start,
+                paragraph_end=end,
             )
-
-        # 増加後の1ページだけ置き、その後を基準行数へ戻せるか確認する。
-        local_end = problem_page_start + next_lines - 1
-        remaining_after_local = end - local_end
-
-        if local_end <= end and remaining_after_local % base_lines == 0:
-            segments.append(
-                _evaluate_segment(
-                    times,
-                    problem_page_start,
-                    local_end,
-                    next_lines,
-                    settings,
-                    base_lines,
-                    start,
-                    end,
-                )
-            )
-            cursor = local_end + 1
-            continue
-
-        # 局所変更では末尾に端数が残るため、増加後の行数で割り切れる
-        # 位置まで開始地点を遡り、そこから段落末まで同じ行数を使う。
-        aligned_start = _align_transition_start(
-            cursor,
-            end,
-            problem_page_start,
-            current_lines,
-            next_lines,
-        )
-
-        # 既に確定した区間と重なる場合は、その確定を取り消して再構成する。
-        #
-        # start だけで判定すると、例えば既存区間 28～29 に対して
-        # aligned_start=29 の場合、28 >= 29 が False となり 29 行目が
-        # 二重所属する。区間の「末尾」が新しい開始位置へ到達しているかで
-        # 判定し、部分的な重なりも必ず取り消す。
-        while segments and segments[-1].end >= aligned_start:
-            segments.pop()
-
-        if aligned_start > cursor:
-            segments.append(
-                _evaluate_segment(
-                    times,
-                    cursor,
-                    aligned_start - 1,
-                    current_lines,
-                    settings,
-                    base_lines,
-                    start,
-                    end,
-                )
-            )
-
-        segments.append(
-            _evaluate_segment(
-                times,
-                aligned_start,
-                end,
-                next_lines,
-                settings,
-                base_lines,
-                start,
-                end,
-            )
-        )
-        break
+            if segments:
+                previous_page_start, previous_size = pages[page_index - 1]
+                segment.replacements.extend(_boundary_replacements(
+                    times, previous_page_start, previous_size,
+                    page_start, size, settings
+                ))
+            segments.append(segment)
 
     return segments
-
 
 
 def _segments_cover_exactly_once(segments, start, end):
