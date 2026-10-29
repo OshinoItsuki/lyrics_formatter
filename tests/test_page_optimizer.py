@@ -56,6 +56,7 @@ class AllocationRegressionTests(unittest.TestCase):
             [(2, 4), (3, 5)],
         )
         self.assertEqual(replacements[0].timing.available_ms, 0)
+        self.assertEqual(replacements[0].overlap_ms, 500)
 
     def test_actual_six_line_case_prefers_three_plus_three(self):
         # 実例の82～87行付近のタイムタグ（単位: 1/100秒）。
@@ -76,6 +77,11 @@ class AllocationRegressionTests(unittest.TestCase):
              for segment in plan.paragraphs],
             [(0, 5, 3)],
         )
+        self.assertFalse(any(
+            replacement.overlap_ms > 0
+            for segment in plan.paragraphs
+            for replacement in segment.replacements
+        ))
 
     def test_last_line_is_not_lost(self):
         self._plan([400 * i for i in range(15)])
