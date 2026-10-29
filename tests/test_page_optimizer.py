@@ -75,6 +75,23 @@ class AllocationRegressionTests(unittest.TestCase):
         )
         self.assertEqual(replacements[0].overlap_ms, 800)
 
+    def test_expanding_uses_new_slots_before_reusing_old_positions(self):
+        # 2→3行では先頭1行が増設枠を使用し、
+        # 既存2行は次ページの後ろ2行と時間を比較する。
+        times = [
+            (38406, 38726), (38678, 38983),
+            (38995, 39706), (39434, 39630), (39643, 40250),
+        ]
+        replacements = _boundary_replacements(
+            times, 0, 2, 2, 3, SETTINGS
+        )
+        self.assertEqual(
+            [(item.previous_index, item.next_index)
+             for item in replacements],
+            [(0, 3), (1, 4)],
+        )
+        self.assertTrue(all(item.overlap_ms == 0 for item in replacements))
+
     def test_actual_six_line_case_prefers_three_plus_three(self):
         # 実例の82～87行付近のタイムタグ（単位: 1/100秒）。
         times = [
@@ -123,8 +140,14 @@ class AllocationRegressionTests(unittest.TestCase):
                 (index + 56, segment.line_count)
                 for index in range(segment.start, segment.end + 1, segment.line_count)
             )
+        # 76～81行は2+2+2、82～87行は3+3であること。
+        self.assertIn((76, 2), page_starts)
+        self.assertIn((78, 2), page_starts)
+        self.assertIn((80, 2), page_starts)
         self.assertIn((82, 3), page_starts)
         self.assertIn((85, 3), page_starts)
+        self.assertNotIn((76, 3), page_starts)
+        self.assertNotIn((79, 3), page_starts)
         self.assertTrue(all(size == 2 for first, size in page_starts if first < 76))
         self.assertNotIn((84, 4), page_starts)
 
