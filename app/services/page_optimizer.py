@@ -199,10 +199,13 @@ def _boundary_replacements(times, previous_start, previous_size, next_start, nex
 
 def _boundary_cost(replacements, settings):
     """条件違反を最優先し、続いて不足量を最小化する。"""
+    forced_cuts = 0
     violations = 0
     shortage = 0
     for replacement in replacements:
         timing = replacement.timing
+        if timing.forced_cut_ms > 0:
+            forced_cuts += 1
         if not _protection_is_preserved(timing, settings):
             violations += 1
         shortage += (
@@ -212,7 +215,7 @@ def _boundary_cost(replacements, settings):
             + max(0, timing.protection_ms - timing.pre_ms)
             + timing.forced_cut_ms
         )
-    return violations, shortage
+    return forced_cuts, violations, shortage
 
 
 def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
@@ -232,13 +235,13 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
         )]
 
     # key=(直前ページ開始位置, 行数), value=(評価値, ページ一覧)
-    # 評価値は辞書式比較: 条件違反 -> 不足量 -> 拡張量 -> 切替回数。
+    # 評価値は辞書式比較: 強制終了 -> 条件違反 -> 不足量 -> 拡張量 -> 切替回数。
     states = {(start, size): (
-        (0, 0, max(0, size - minimum), 0, 1),
+        (0, 0, 0, max(0, size - minimum), 0, 1),
         [(start, size)],
     ) for size in range(minimum, upper + 1)}
     if not states:
-        states = {(start, count): ((0, 0, 0, 0, 1), [(start, count)])}
+        states = {(start, count): ((0, 0, 0, 0, 0, 1), [(start, count)])}
 
     completed = []
     for _ in range(count):
@@ -261,13 +264,14 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
                     times, previous_start, previous_size,
                     next_start, size, settings
                 )
-                violations, shortage = _boundary_cost(replacements, settings)
+                forced_cuts, violations, shortage = _boundary_cost(replacements, settings)
                 next_score = (
-                    score[0] + violations,
-                    score[1] + shortage,
-                    score[2] + max(0, size - minimum),
-                    score[3] + int(size != previous_size),
-                    score[4] + 1,
+                    score[0] + forced_cuts,
+                    score[1] + violations,
+                    score[2] + shortage,
+                    score[3] + max(0, size - minimum),
+                    score[4] + int(size != previous_size),
+                    score[5] + 1,
                 )
                 key = (next_start, size)
                 old = next_states.get(key)
