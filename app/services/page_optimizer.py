@@ -10,6 +10,7 @@ class ReplacementEvaluation:
     previous_index: int
     next_index: int
     timing: TimingResult
+    overlap_ms: int = 0
 
 
 @dataclass
@@ -192,6 +193,14 @@ def _boundary_replacements(times, previous_start, previous_size, next_start, nex
                 next_start + offset,
                 settings,
             ),
+            overlap_ms=max(
+                0,
+                (times[previous_start + previous_offset + offset][1]
+                 - times[next_start + offset][0]) * 10,
+            ) if (
+                times[previous_start + previous_offset + offset][1] is not None
+                and times[next_start + offset][0] is not None
+            ) else 0,
         )
         for offset in range(count)
     ]
@@ -204,7 +213,7 @@ def _boundary_cost(replacements, settings):
     shortage = 0
     for replacement in replacements:
         timing = replacement.timing
-        if timing.forced_cut_ms > 0:
+        if timing.forced_cut_ms > 0 or replacement.overlap_ms > 0:
             forced_cuts += 1
         if not _protection_is_preserved(timing, settings):
             violations += 1
