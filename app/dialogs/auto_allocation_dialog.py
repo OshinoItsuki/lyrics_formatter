@@ -311,6 +311,8 @@ class AutoAllocationDialog:
                 if pre_reduced:
                     notes.append(f"ワイプ前 {self.settings['pre_wipe_ms']}→{actual_pre} ms")
                 source_timing = incoming.timing if incoming else None
+                if incoming and incoming.overlap_ms > 0:
+                    notes.append(f"歌唱時間重複 {incoming.overlap_ms} ms")
                 if source_timing and source_timing.interval_ms < self.settings["interval_ms"]:
                     notes.append(f"間隔 {self.settings['interval_ms']}→{source_timing.interval_ms} ms")
                 if post_reduced:
@@ -335,7 +337,7 @@ class AutoAllocationDialog:
                     _format_ms(display_end_ms),
                     "／".join(notes),
                 )
-                reduced = pre_reduced or post_reduced or any(marker in values[6] for marker in ("間隔 ", "強制終了"))
+                reduced = pre_reduced or post_reduced or any(marker in values[6] for marker in ("間隔 ", "強制終了", "歌唱時間重複"))
 
                 for col, (value, (_title, _width, anchor)) in enumerate(zip(values, self.COLUMNS)):
                     fg = "#cc0000" if reduced and col in (2, 5, 6) else "#111111"
