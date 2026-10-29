@@ -190,6 +190,15 @@ def _boundary_replacements(times, previous_start, previous_size, next_start, nex
             (previous_start + offset, next_start + offset)
             for offset in range(previous_size)
         ]
+    elif next_size > previous_size:
+        # 拡張された枠には新しい歌詞を先に配置できる。
+        # 2行→3行なら次ページの先頭1行は新設枠を使い、
+        # 残り2行だけ既存枠の置換として比較する。
+        added = next_size - previous_size
+        pairs = [
+            (previous_start + offset, next_start + added + offset)
+            for offset in range(previous_size)
+        ]
     else:
         previous_index = max(
             range(previous_start, previous_start + previous_size),
@@ -267,10 +276,10 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
         )]
 
     # score=(重なり・強制終了, 行数・時間の負担, 短縮量, 切替数, ページ数)
-    # 行数拡張の負担は増加分×2。軽微な間隔短縮より基準行数を優先。
+    # 行数拡張は二乗ペナルティ。4行の多用より局所的な3行を優先。
     states = {
         (start, size): (
-            (0, max(0, size - minimum) * 2, 0, 0, 1),
+            (0, max(0, size - minimum) ** 2 * 2, 0, 0, 1),
             [(start, size)],
         )
         for size in range(minimum, upper + 1)
@@ -301,7 +310,7 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
                 )
                 next_score = (
                     score[0] + conflicts,
-                    score[1] + soft_cost + max(0, size - minimum) * 2,
+                    score[1] + soft_cost + max(0, size - minimum) ** 2 * 2,
                     score[2] + shortage,
                     score[3] + int(size != previous_size),
                     score[4] + 1,
