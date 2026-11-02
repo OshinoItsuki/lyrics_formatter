@@ -151,6 +151,42 @@ class AllocationRegressionTests(unittest.TestCase):
         self.assertTrue(all(size == 2 for first, size in page_starts if first < 76))
         self.assertNotIn((84, 4), page_starts)
 
+    def test_three_line_paragraph_prefers_two_plus_one(self):
+        # 実例の11～13行。2行上段（11）が終了してから
+        # 13行を同じ上段に表示できるため、3行表示は不要。
+        times = [
+            (9536, 10233),   # 11
+            (10094, 10599),  # 12
+            (10466, 10949),  # 13
+        ]
+        plan = optimize_pages(
+            times, SETTINGS, max_lines=4,
+            paragraph_ranges=[(0, 2)], base_lines=2,
+        )
+        self.assertEqual(
+            [(segment.start, segment.end, segment.line_count)
+             for segment in plan.paragraphs],
+            [(0, 2, 2)],
+        )
+        self.assertEqual(
+            [(item.previous_index, item.next_index)
+             for item in plan.paragraphs[0].replacements],
+            [(0, 2)],
+        )
+
+    def test_terminal_single_line_is_preserved_without_extra_page(self):
+        # 2+2+1は2行枠の連続表示とみなす。
+        times = [(i * 350, i * 350 + 90) for i in range(5)]
+        plan = optimize_pages(
+            times, SETTINGS, max_lines=4,
+            paragraph_ranges=[(0, 4)], base_lines=2,
+        )
+        self.assertEqual(
+            [(segment.start, segment.end, segment.line_count)
+             for segment in plan.paragraphs],
+            [(0, 4, 2)],
+        )
+
     def test_last_line_is_not_lost(self):
         self._plan([400 * i for i in range(15)])
 
