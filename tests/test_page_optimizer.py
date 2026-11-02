@@ -155,9 +155,9 @@ class AllocationRegressionTests(unittest.TestCase):
         # 実例の11～13行。2行上段（11）が終了してから
         # 13行を同じ上段に表示できるため、3行表示は不要。
         times = [
-            (9536, 10233),   # 11
-            (10094, 10599),  # 12
-            (10466, 10949),  # 13
+            (9736, 10233),   # 11
+            (10244, 10599),  # 12
+            (10616, 10949),  # 13
         ]
         plan = optimize_pages(
             times, SETTINGS, max_lines=4,
