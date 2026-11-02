@@ -185,7 +185,11 @@ def _boundary_replacements(times, previous_start, previous_size, next_start, nex
     一部の行だけを対応させると、3→4行などで評価されない表示枠に
     重なりが残る。
     """
-    if previous_size == next_size:
+    if next_size == 1:
+        # 段落末の余り1行は、前ページを丸ごと交換するのではなく
+        # 先頭表示枠だけを再利用する。2行→残り1行なら先頭行→末尾行。
+        pairs = [(previous_start, next_start)]
+    elif previous_size == next_size:
         pairs = [
             (previous_start + offset, next_start + offset)
             for offset in range(previous_size)
@@ -308,12 +312,14 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
                 conflicts, soft_cost, shortage = _boundary_cost(
                     replacements, settings
                 )
+                # 最終1行は追加の表示枠を要求しないため、行数切替扱いにしない。
+                terminal_single = size == 1 and remaining == 1
                 next_score = (
                     score[0] + conflicts,
                     score[1] + soft_cost + max(0, size - minimum) ** 2 * 3,
                     score[2] + shortage,
-                    score[3] + int(size != previous_size),
-                    score[4] + 1,
+                    score[3] + int(size != previous_size and not terminal_single),
+                    score[4] + int(not terminal_single),
                 )
                 key = (next_start, size)
                 old = next_states.get(key)
@@ -333,7 +339,17 @@ def _optimize_paragraph(times, start, end, settings, base_lines, max_lines):
     segments = []
     for page_index, (page_start, size) in enumerate(pages):
         page_end = page_start + size - 1
-        if segments and segments[-1].line_count == size:
+        if size == 1 and page_index > 0:
+            # 端数1行は前ページの先頭枠を置換するだけなので、
+            # 直前の基準行数セグメントへ組み込む（2+1、3+1）。
+            previous = segments[-1]
+            previous_start, previous_size = pages[page_index - 1]
+            previous.end = page_end
+            previous.replacements.extend(_boundary_replacements(
+                times, previous_start, previous_size,
+                page_start, 1, settings
+            ))
+        elif segments and segments[-1].line_count == size:
             previous = segments[-1]
             previous.end = page_end
             previous.replacements.extend(_boundary_replacements(
@@ -454,11 +470,8 @@ def build_plan(times, paragraph_ranges, settings, base_lines=2, max_lines=4, opt
                 effective_base,
                 max_lines,
             )
-            # 段落末に1行だけ残る場合も、そのまま1行ページとして採用する。
-            # 前ページから行を移す再配分は行わない。
-            paragraph_segments = _separate_terminal_single_line(
-                paragraph_segments, end
-            )
+            # 段落末に残る1行は前ページの表示枠を再利用する。
+            # 2+1等を別の1行ページへ分割しない。
 
             # 自動割付は元歌詞の行を増減させてはいけない。
             # 万一、最適化結果に重複・欠落が生じた場合は壊れた plan を
