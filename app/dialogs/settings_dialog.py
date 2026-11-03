@@ -27,11 +27,12 @@ class SettingsDialog:
 
         self.on_applied = on_applied
         self.window = tk.Toplevel(self.root)
+        # 初期位置で一瞬描画されないよう、配置完了まで非表示にする。
+        self.window.withdraw()
         self.app.apply_window_icon(self.window)
         self.window.title("設定")
         self.window.resizable(False, False)
         self.window.transient(self.root)
-        self.window.grab_set()
 
         self.threshold_var = tk.StringVar(value=self.app.threshold_var.get())
         self.line_count_var = tk.StringVar(value=self.app.line_count_var.get())
@@ -281,6 +282,11 @@ class SettingsDialog:
         self.notebook.select(1 if initial_tab == "allocation" else 0)
         self.window.update_idletasks()
         self.app.center_window(self.window)
+        # アプリ中央への配置が確定してから、初めて画面へ表示する。
+        self.window.deiconify()
+        self.window.grab_set()
+        self.window.lift()
+        self.window.focus_set()
 
     def load_nicokara_settings(self):
         path = filedialog.askopenfilename(
