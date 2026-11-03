@@ -281,8 +281,21 @@ class SettingsDialog:
         tk.Button(button_frame, text="キャンセル", width=10, command=self.window.destroy).pack(side="left", padx=5)
         self.notebook.select(1 if initial_tab == "allocation" else 0)
         self.window.update_idletasks()
-        self.app.center_window(self.window)
-        # アプリ中央への配置が確定してから、初めて画面へ表示する。
+
+        # withdraw() 中は winfo_width/height が初期値のままの場合がある。
+        # 非表示のままレイアウトの要求サイズを取得し、明示的に配置する。
+        width = max(self.window.winfo_reqwidth(), main.winfo_reqwidth())
+        height = max(self.window.winfo_reqheight(), main.winfo_reqheight())
+        self.root.update_idletasks()
+        parent_x = self.root.winfo_rootx()
+        parent_y = self.root.winfo_rooty()
+        parent_width = self.root.winfo_width()
+        parent_height = self.root.winfo_height()
+        x = parent_x + (parent_width - width) // 2
+        y = parent_y + (parent_height - height) // 2
+        self.window.geometry(f"{width}x{height}+{x}+{y}")
+
+        # 正しいサイズ・位置が確定してから表示する。
         self.window.deiconify()
         self.window.grab_set()
         self.window.lift()
