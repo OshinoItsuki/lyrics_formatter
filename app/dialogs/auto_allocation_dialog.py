@@ -5,7 +5,6 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from ..config import TIME_PATTERN
-from .auto_allocation_settings_dialog import AutoAllocationSettingsDialog
 
 
 def _format_ms(value: int | None) -> str:
@@ -51,7 +50,6 @@ class AutoAllocationDialog:
         self.apply_callback = None
         self.base_lines_var = tk.StringVar(value="2")
         self.max_lines_var = tk.StringVar(value="4")
-        self.settings_dialog = AutoAllocationSettingsDialog(app)
         self.status_var = tk.StringVar(value="")
         self.body_canvas = None
         self.header_canvas = None
@@ -122,7 +120,7 @@ class AutoAllocationDialog:
         )
 
     def _open_settings(self):
-        self.settings_dialog.show(on_applied=self._settings_applied)
+        self.app.settings_dialog.show(initial_tab="allocation", on_applied=self._settings_applied)
 
     def _settings_applied(self):
         self.base_lines_var.set(str(self.app.auto_allocation_base_lines.get()))
