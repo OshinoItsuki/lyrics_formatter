@@ -1957,7 +1957,7 @@ class LyricsFormatter:
                 apply_plan(plan, base_lines, maximum)
                 return
         except Exception as exc:
-            messagebox.showerror("自動割付", f"自動割付に失敗しました。\\n\\n{exc}")
+            messagebox.showerror("自動割付", f"自動割付に失敗しました。\n\n{exc}")
             return
 
         self.auto_allocation_dialog.show(
