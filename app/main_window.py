@@ -547,6 +547,11 @@ class LyricsFormatter:
         )
 
         tool_menu.add_command(
+            label="割付確認",
+            command=self.show_auto_allocation_review
+        )
+
+        tool_menu.add_command(
             label="タイムタグ検査",
             command=self.inspector.show
         )
@@ -1889,7 +1894,7 @@ class LyricsFormatter:
         self.refresh_visuals(self.output_text, self.areas[1][1])
         self.copy_output()
 
-    def auto_allocate(self):
+    def auto_allocate(self, review=False):
 
         lines = [
             line.rstrip()
@@ -1946,7 +1951,14 @@ class LyricsFormatter:
             self.max_page_lines.set(selected_maximum)
             self.save_settings()
 
-        plan, settings = calculate(base_lines, maximum)
+        try:
+            plan, settings = calculate(base_lines, maximum)
+            if not review:
+                apply_plan(plan, base_lines, maximum)
+                return
+        except Exception as exc:
+            messagebox.showerror("自動割付", f"自動割付に失敗しました。\\n\\n{exc}")
+            return
 
         self.auto_allocation_dialog.show(
             lines,
@@ -1957,6 +1969,9 @@ class LyricsFormatter:
             calculate,
             apply_plan,
         )
+
+    def show_auto_allocation_review(self):
+        self.auto_allocate(review=True)
 
     def open_readme(self):
 
