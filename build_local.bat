@@ -32,8 +32,13 @@ if errorlevel 1 (
 )
 
 echo.
+echo [INFO] ドラッグ＆ドロップ用ライブラリを確認しています...
+python -m pip install -r requirements.txt
+if errorlevel 1 goto :failed
+
+echo.
 echo [1/2] EXE を作成しています...
-python -m PyInstaller --clean --noconfirm --onefile --windowed --name "%APP_NAME%" --icon "icon.ico" "main.py"
+python -m PyInstaller --clean --noconfirm --onefile --windowed --collect-all tkinterdnd2 --name "%APP_NAME%" --icon "icon.ico" "main.py"
 if errorlevel 1 goto :failed
 
 echo.
