@@ -6,7 +6,10 @@ import sys
 import threading
 import tkinter as tk
 import webbrowser
+from pathlib import Path
 from tkinter import filedialog, messagebox
+
+from tkinterdnd2 import DND_FILES
 
 from .config import (
     APP_NAME,
@@ -21,6 +24,7 @@ from .dialogs.auto_allocation_dialog import AutoAllocationDialog
 from .services.part_extractor import extract_parts as extract_part_names
 from .services.update_service import get_latest_release as fetch_latest_release
 from .services.page_optimizer import fixed_pages, optimize_pages
+from .services.rlf_reader import extract_rlf_lyrics, RlfFormatError
 from .settings_store import default_settings, load_settings_data, write_settings
 
 class LyricsFormatter:
@@ -131,6 +135,11 @@ class LyricsFormatter:
         self.auto_allocation_dialog = AutoAllocationDialog(self)
         
         self.build_ui()
+        # Drop a text or native RhythmicaLyrics edit file anywhere on the app,
+        # including directly over the input text widget.
+        for target in (self.root, self.input_text):
+            target.drop_target_register(DND_FILES)
+            target.dnd_bind("<<Drop>>", self._handle_file_drop)
 
         #
         # ウインドウサイズ確定
@@ -2136,49 +2145,60 @@ class LyricsFormatter:
             pady=15
         )
     
-    def open_file(
-        self,
-        event=None
-    ):
+    def _load_lyrics_file(self, path):
+        """Read a file first; change the input only after successful extraction."""
+        file_path = Path(path)
+        extension = file_path.suffix.lower()
+        if extension == ".rlf":
+            text = extract_rlf_lyrics(file_path)
+        elif extension in (".txt", ".lrc", ".kra"):
+            raw = file_path.read_bytes()
+            text = None
+            for encoding in ("utf-8-sig", "utf-16", "cp932"):
+                try:
+                    candidate = raw.decode(encoding)
+                    # UTF-16 bytes decoded as UTF-8 can contain many nulls.
+                    if "\x00" not in candidate:
+                        text = candidate
+                        break
+                except UnicodeError:
+                    continue
+            if text is None:
+                raise ValueError("テキストの文字コードを認識できませんでした。")
+        else:
+            raise ValueError("対応形式は .rlf / .txt / .lrc / .kra です。")
 
+        self.input_text.delete("1.0", "end")
+        self.input_text.insert("1.0", text)
+        self.refresh_visuals(self.input_text, self.areas[0][1])
+
+    def _handle_file_drop(self, event):
+        try:
+            paths = self.root.tk.splitlist(event.data)
+            if len(paths) != 1:
+                raise ValueError("ファイルは1つずつドラッグ＆ドロップしてください。")
+            self._load_lyrics_file(paths[0])
+        except (OSError, ValueError, RlfFormatError) as exc:
+            messagebox.showerror("歌詞ファイル読み込みエラー", str(exc), parent=self.root)
+        return "break"
+
+    def open_file(self, event=None):
         path = filedialog.askopenfilename(
-
-            title="テキストファイルを開く",
-
+            title="歌詞ファイルを開く",
             filetypes=[
-
-                ("Text File", "*.txt"),
-
-                ("All Files", "*.*")
-            ]
+                ("歌詞・リズミカ編集ファイル", "*.rlf *.txt *.lrc *.kra"),
+                ("RhythmicaLyrics編集ファイル", "*.rlf"),
+                ("テキストファイル", "*.txt *.lrc *.kra"),
+                ("すべてのファイル", "*.*"),
+            ],
         )
-
         if not path:
             return
+        try:
+            self._load_lyrics_file(path)
+        except (OSError, ValueError, RlfFormatError) as exc:
+            messagebox.showerror("歌詞ファイル読み込みエラー", str(exc), parent=self.root)
 
-        with open(
-            path,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
-            text = f.read()
-
-        self.input_text.delete(
-            "1.0",
-            "end"
-        )
-
-        self.input_text.insert(
-            "1.0",
-            text
-        )
-
-        self.refresh_visuals(
-            self.input_text,
-            self.areas[0][1]
-        )
-    
     def insert_blank_line(
         self,
         event=None
