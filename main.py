@@ -1,10 +1,10 @@
-import tkinter as tk
+from tkinterdnd2 import TkinterDnD
 
 from app.main_window import LyricsFormatter
 
 
 def main() -> None:
-    root = tk.Tk()
+    root = TkinterDnD.Tk()
     LyricsFormatter(root)
     root.mainloop()
 
